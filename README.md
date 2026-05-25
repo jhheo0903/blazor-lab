@@ -1,4 +1,4 @@
-# Blazor Security Lab
+# Blazor Lab
 
 [한국어](README.md) | [English](README.en.md)
 
