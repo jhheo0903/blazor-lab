@@ -1,0 +1,95 @@
+@using DiffPlex.DiffBuilder.Model
+
+@if (DiffModel is null)
+{
+    <div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--c-text-3);font-size:13px;">
+        <i class="bi bi-file-diff" style="font-size:28px;margin-bottom:8px;display:block;text-align:center;opacity:.4;"></i>
+    </div>
+}
+else
+{
+    <div class="sbs-container">
+        <div class="sbs-header sbs-left">
+            <i class="bi bi-hdd-stack" style="font-size:11px;"></i>
+            <span>운영</span>
+            <span class="sbs-stat" style="color:var(--c-red);">
+                -@DiffModel.OldText.Lines.Count(l => l.Type == ChangeType.Deleted || l.Type == ChangeType.Modified)
+            </span>
+        </div>
+        <div class="sbs-header sbs-right">
+            <i class="bi bi-box-arrow-in-down" style="font-size:11px;"></i>
+            <span>배포</span>
+            <span class="sbs-stat" style="color:var(--c-green);">
+                +@DiffModel.NewText.Lines.Count(l => l.Type == ChangeType.Inserted || l.Type == ChangeType.Modified)
+            </span>
+        </div>
+
+        @{
+            var maxLines = Math.Max(DiffModel.OldText.Lines.Count, DiffModel.NewText.Lines.Count);
+        }
+        @for (var i = 0; i < maxLines; i++)
+        {
+            var oldLine = i < DiffModel.OldText.Lines.Count ? DiffModel.OldText.Lines[i] : null;
+            var newLine = i < DiffModel.NewText.Lines.Count ? DiffModel.NewText.Lines[i] : null;
+            var lineNum = i + 1;
+
+            <div class="sbs-row @GetRowClass(oldLine?.Type)" style="grid-column:1;">
+                <span class="sbs-line-no">@(oldLine?.Type == ChangeType.Imaginary ? "" : lineNum.ToString())</span>
+                <span class="sbs-prefix">@GetPrefix(oldLine?.Type, false)</span>
+                <span class="sbs-text">@RenderPieces(oldLine)</span>
+            </div>
+            <div class="sbs-row @GetRowClass(newLine?.Type)" style="grid-column:2;">
+                <span class="sbs-line-no">@(newLine?.Type == ChangeType.Imaginary ? "" : lineNum.ToString())</span>
+                <span class="sbs-prefix">@GetPrefix(newLine?.Type, true)</span>
+                <span class="sbs-text">@RenderPieces(newLine)</span>
+            </div>
+        }
+    </div>
+}
+
+@code {
+    [Parameter] public SideBySideDiffModel? DiffModel { get; set; }
+
+    private static string GetRowClass(ChangeType? type) => type switch
+    {
+        ChangeType.Deleted   => "sbs-deleted",
+        ChangeType.Inserted  => "sbs-inserted",
+        ChangeType.Modified  => "sbs-modified",
+        ChangeType.Imaginary => "sbs-imaginary",
+        _                    => string.Empty
+    };
+
+    private static string GetPrefix(ChangeType? type, bool isRight) => type switch
+    {
+        ChangeType.Deleted  => isRight ? " " : "-",
+        ChangeType.Inserted => isRight ? "+" : " ",
+        ChangeType.Modified => isRight ? "+" : "-",
+        _                   => " "
+    };
+
+    private static RenderFragment RenderPieces(DiffPiece? line) => builder =>
+    {
+        if (line is null || line.Text is null) return;
+
+        if (line.SubPieces is { Count: > 0 } pieces &&
+            (line.Type == ChangeType.Modified || line.Type == ChangeType.Inserted || line.Type == ChangeType.Deleted))
+        {
+            foreach (var piece in pieces)
+            {
+                if (piece.Type == ChangeType.Unchanged || piece.Type == ChangeType.Imaginary)
+                    builder.AddContent(0, piece.Text);
+                else
+                {
+                    builder.OpenElement(1, "mark");
+                    builder.AddAttribute(2, "class", "sbs-word-mark");
+                    builder.AddContent(3, piece.Text);
+                    builder.CloseElement();
+                }
+            }
+        }
+        else
+        {
+            builder.AddContent(0, line.Text);
+        }
+    };
+}

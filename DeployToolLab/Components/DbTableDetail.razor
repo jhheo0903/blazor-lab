@@ -1,0 +1,130 @@
+@using DeployTool.Models
+@using DeployTool.Services
+
+<div style="height:100%;display:flex;flex-direction:column;">
+    @if (SelectedObject is null)
+    {
+        <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;color:var(--text-muted);">
+            <i class="bi bi-arrow-left-circle" style="font-size:32px;margin-bottom:12px;opacity:.4;"></i>
+            <div style="font-size:13.5px;">왼쪽 트리에서 객체를 선택하세요.</div>
+        </div>
+    }
+    else if (_isLoading)
+    {
+        <div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-muted);">
+            <div class="spinner-border me-3" style="width:22px;height:22px;"></div>
+            <span style="font-size:13.5px;">로딩 중...</span>
+        </div>
+    }
+    else if (SelectedObject.ObjectType == DbObjectType.Table)
+    {
+        <div class="detail-header">
+            <i class="bi bi-table" style="color:var(--accent);"></i>
+            <span class="detail-title">@SelectedObject.Name</span>
+            <span style="font-size:11px;background:var(--bg-hover);color:var(--text-muted);border-radius:10px;padding:2px 10px;">@_columns.Count 컬럼</span>
+        </div>
+
+        <div style="flex:1;overflow:auto;">
+            <table class="table table-sm mb-0" style="font-family:var(--font-mono);">
+                <thead>
+                    <tr>
+                        <th>#</th>
+                        <th>컬럼명</th>
+                        <th>타입</th>
+                        <th>Null</th>
+                        <th>기본값</th>
+                        <th>키</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var col in _columns)
+                    {
+                        <tr>
+                            <td style="color:var(--text-muted);font-size:11px;">@col.OrdinalPosition</td>
+                            <td style="font-weight:600;">@col.ColumnName</td>
+                            <td style="color:var(--accent);">@col.DataType</td>
+                            <td style="color:@(col.IsNullable ? "var(--text-muted)" : "var(--text-secondary)");">@(col.IsNullable ? "YES" : "NO")</td>
+                            <td style="color:var(--text-muted);font-size:12px;">@(col.ColumnDefault ?? "—")</td>
+                            <td>
+                                @if (col.IsPrimaryKey) { <i class="bi bi-key-fill me-1" style="color:var(--yellow);font-size:12px;" title="PK"></i> }
+                                @if (col.IsForeignKey) { <i class="bi bi-link-45deg" style="color:var(--accent);font-size:13px;" title="FK: @col.ReferencedTable"></i> }
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+
+            @if (_indexes.Any())
+            {
+                <div style="padding:12px 0 4px 0;margin:0 0 0 0;border-top:1px solid var(--border);margin-top:0;">
+                    <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;color:var(--text-muted);padding:8px 12px;">인덱스</div>
+                    <table class="table table-sm mb-0" style="font-family:var(--font-mono);">
+                        <thead><tr><th>인덱스명</th><th>유니크</th><th>컬럼</th></tr></thead>
+                        <tbody>
+                            @foreach (var idx in _indexes)
+                            {
+                                <tr>
+                                    <td style="font-weight:@(idx.IsPrimaryKey ? "700" : "400");color:@(idx.IsPrimaryKey ? "var(--yellow)" : "inherit");">
+                                        @if (idx.IsPrimaryKey) { <i class="bi bi-key-fill me-1" style="font-size:11px;"></i> }
+                                        @idx.IndexName
+                                    </td>
+                                    <td>@(idx.IsUnique ? "✓" : "—")</td>
+                                    <td style="color:var(--text-secondary);">@string.Join(", ", idx.Columns)</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+        </div>
+    }
+    else
+    {
+        <div class="detail-header">
+            <i class="bi @(SelectedObject.ObjectType == DbObjectType.View ? "bi-eye" : "bi-gear")" style="color:var(--accent);"></i>
+            <span class="detail-title">@SelectedObject.Name</span>
+        </div>
+
+        <div style="flex:1;overflow:auto;background:var(--bg-base);border:1px solid var(--border);border-radius:var(--radius);padding:16px;">
+            <pre style="font-family:var(--font-mono);font-size:12.5px;color:var(--text-primary);margin:0;white-space:pre-wrap;word-break:break-word;">@_definition</pre>
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter] public DbObject? SelectedObject { get; set; }
+    [Parameter] public string? ConnectionString { get; set; }
+    [Inject] private DbSchemaService DbSchemaService { get; set; } = default!;
+
+    private bool _isLoading;
+    private List<DbColumn> _columns = [];
+    private List<DbIndex> _indexes = [];
+    private string? _definition;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (SelectedObject is null || ConnectionString is null) return;
+
+        _isLoading = true;
+        _columns = [];
+        _indexes = [];
+        _definition = null;
+
+        try
+        {
+            if (SelectedObject.ObjectType == DbObjectType.Table)
+            {
+                _columns = await DbSchemaService.LoadColumnsAsync(ConnectionString, SelectedObject.Name);
+                _indexes = await DbSchemaService.LoadIndexesAsync(ConnectionString, SelectedObject.Name);
+            }
+            else
+            {
+                _definition = await DbSchemaService.LoadObjectDefinitionAsync(ConnectionString, SelectedObject.Name);
+            }
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+}

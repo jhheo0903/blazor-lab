@@ -1,0 +1,32 @@
+@using DeployTool.Models
+
+<div style="margin-bottom:2px;">
+    <div class="db-section-header" @onclick="ToggleExpand">
+        <i class="bi @(IsExpanded ? "bi-chevron-down" : "bi-chevron-right")" style="font-size:10px;color:var(--text-muted);"></i>
+        <i class="bi @Icon" style="font-size:12px;"></i>
+        <span>@Title</span>
+        <span style="margin-left:auto;font-size:11px;background:var(--bg-hover);color:var(--text-muted);border-radius:10px;padding:1px 7px;">@Items.Count()</span>
+    </div>
+
+    @if (IsExpanded)
+    {
+        @foreach (var item in Items)
+        {
+            <div class="db-tree-item @(SelectedObject == item ? "selected" : "")"
+                 @onclick="() => OnSelect.InvokeAsync(item)">
+                @item.Name
+            </div>
+        }
+    }
+</div>
+
+@code {
+    [Parameter] public string Title { get; set; } = string.Empty;
+    [Parameter] public string Icon { get; set; } = "bi-folder";
+    [Parameter] public IEnumerable<DbObject> Items { get; set; } = [];
+    [Parameter] public DbObject? SelectedObject { get; set; }
+    [Parameter] public EventCallback<DbObject> OnSelect { get; set; }
+
+    private bool IsExpanded { get; set; } = true;
+    private void ToggleExpand() => IsExpanded = !IsExpanded;
+}

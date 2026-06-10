@@ -1,0 +1,70 @@
+@using DeployTool.Models
+@inject DeploySession Session
+
+<div class="nav-group">
+    <div class="nav-group-label">파일 배포</div>
+    <ul class="nav flex-column gap-1" style="list-style:none;padding:0;margin:0;">
+        <li>
+            <NavLink class="nav-link" href="/deploy" Match="NavLinkMatch.All">
+                <span class="step-pill">1</span>
+                <span>경로 설정</span>
+            </NavLink>
+        </li>
+        <li>
+            <NavLink class="nav-link" href="/deploy/scope">
+                <span class="step-pill" style="font-size:9px;">1.5</span>
+                <span>범위 선택</span>
+            </NavLink>
+        </li>
+        <li>
+            <NavLink class="nav-link" href="/deploy/review">
+                <span class="step-pill">3</span>
+                <span class="flex-grow-1">변경 검토</span>
+                @if (Session.ChangedItems.Any())
+                {
+                    <span class="badge badge-changed">@Session.ChangedItems.Count()</span>
+                }
+            </NavLink>
+        </li>
+        <li>
+            <NavLink class="nav-link" href="/deploy/backup">
+                <span class="step-pill">4</span>
+                <span class="flex-grow-1">백업</span>
+                @if (Session.BackupPath is not null)
+                {
+                    <i class="bi bi-check-circle-fill" style="color:var(--green);font-size:12px;"></i>
+                }
+            </NavLink>
+        </li>
+        <li>
+            <NavLink class="nav-link" href="/deploy/execute">
+                <span class="step-pill">5</span>
+                <span class="flex-grow-1">배포 실행</span>
+                @if (Session.IsDeploying)
+                {
+                    <span class="spinner-border spinner-border-sm" style="width:10px;height:10px;border-width:1.5px;"></span>
+                }
+            </NavLink>
+        </li>
+        <li>
+            <NavLink class="nav-link" href="/deploy/result">
+                <span class="step-pill">6</span>
+                <span>결과 확인</span>
+            </NavLink>
+        </li>
+    </ul>
+</div>
+
+<div class="nav-divider"></div>
+
+<div class="nav-group">
+    <div class="nav-group-label">데이터베이스</div>
+    <ul class="nav flex-column gap-1" style="list-style:none;padding:0;margin:0;">
+        <li>
+            <NavLink class="nav-link" href="/dbschema">
+                <span class="nav-icon"><i class="bi bi-database"></i></span>
+                <span>스키마 뷰어</span>
+            </NavLink>
+        </li>
+    </ul>
+</div>

@@ -1,4 +1,7 @@
 <Solution>
+  <Folder Name="/DeployToolLab/">
+    <Project Path="DeployToolLab/DeployTool.csproj" />
+  </Folder>
   <Folder Name="/Examples/">
     <Project Path="Examples/B2-Server/B2-Server.csproj" />
     <Project Path="Examples/B2-WebAssembly/B2-WebAssembly.csproj" />

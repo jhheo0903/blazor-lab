@@ -1,0 +1,115 @@
+@page "/dbschema"
+@using DeployTool.Models
+@using DeployTool.Services
+@using DeployTool.Components
+@inject DbSchemaService DbSchemaService
+
+<PageTitle>DB 스키마 뷰어 — DeployTool</PageTitle>
+
+<div class="page-header" style="margin-bottom:16px;">
+    <h1 class="page-title">
+        <span class="title-icon"><i class="bi bi-database"></i></span>
+        DB 스키마 뷰어
+    </h1>
+</div>
+
+<div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;max-width:760px;margin-bottom:16px;">
+    <div style="flex:1;min-width:300px;">
+        <label class="form-label"><i class="bi bi-link-45deg me-1"></i>연결 문자열</label>
+        <input class="form-control" type="password"
+               placeholder="Data Source=서버;Initial Catalog=DB;User ID=...;Password=..."
+               @bind="_connectionString" />
+    </div>
+    <div style="display:flex;gap:8px;">
+        <button class="btn btn-outline-secondary" @onclick="TestConnectionAsync" disabled="@_isBusy">
+            <i class="bi bi-plug"></i>연결 테스트
+        </button>
+        <button class="btn btn-primary" @onclick="ConnectAsync" disabled="@_isBusy">
+            @if (_isBusy) { <span class="spinner-border spinner-border-sm"></span> }
+            else          { <i class="bi bi-database-add"></i> }
+            <span>연결</span>
+        </button>
+    </div>
+</div>
+
+@if (_connectionStatus is not null)
+{
+    <div style="margin-bottom:14px;display:flex;align-items:center;gap:8px;font-size:12.5px;">
+        <i class="bi @(_connectionOk ? "bi-check-circle-fill" : "bi-x-circle-fill")"
+           style="color:@(_connectionOk ? "var(--c-green)" : "var(--c-red)");"></i>
+        <span style="color:@(_connectionOk ? "var(--c-green)" : "var(--c-red)");">@_connectionStatus</span>
+    </div>
+}
+
+@if (_schema is not null)
+{
+    <div style="display:flex;height:calc(100vh - 260px);border:1px solid var(--c-border);border-radius:var(--r-lg);overflow:hidden;">
+        <div class="tree-pane" style="width:260px;min-width:260px;">
+            <DbTableTree Schema="@_schema"
+                         SelectedObject="@_selectedObject"
+                         OnSelect="@OnObjectSelected" />
+        </div>
+        <div class="detail-pane" style="flex:1;">
+            <DbTableDetail SelectedObject="@_selectedObject"
+                           ConnectionString="@_connectionString" />
+        </div>
+    </div>
+}
+else if (_isBusy)
+{
+    <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:200px;color:var(--c-text-3);">
+        <div class="spinner-border mb-3" style="width:28px;height:28px;"></div>
+        <div style="font-size:13.5px;">스키마 로딩 중...</div>
+    </div>
+}
+else
+{
+    <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:200px;color:var(--c-text-3);">
+        <i class="bi bi-database" style="font-size:40px;margin-bottom:12px;opacity:.3;"></i>
+        <div style="font-size:13.5px;">연결 문자열을 입력하고 연결 버튼을 클릭하세요.</div>
+    </div>
+}
+
+@code {
+    private string _connectionString = string.Empty;
+    private string? _connectionStatus;
+    private bool _connectionOk;
+    private bool _isBusy;
+    private DbSchemaInfo? _schema;
+    private DbObject? _selectedObject;
+
+    private async Task TestConnectionAsync()
+    {
+        _isBusy = true;
+        try
+        {
+            var ok = await DbSchemaService.TestConnectionAsync(_connectionString);
+            _connectionOk = ok;
+            _connectionStatus = ok ? "연결 성공" : "연결 실패";
+        }
+        finally { _isBusy = false; }
+    }
+
+    private async Task ConnectAsync()
+    {
+        _isBusy = true;
+        _schema = null;
+        _selectedObject = null;
+        _connectionStatus = null;
+
+        try
+        {
+            _schema = await DbSchemaService.LoadSchemaAsync(_connectionString);
+            _connectionOk = true;
+            _connectionStatus = $"연결됨: {_schema.DatabaseName}";
+        }
+        catch (Exception ex)
+        {
+            _connectionOk = false;
+            _connectionStatus = $"오류: {ex.Message}";
+        }
+        finally { _isBusy = false; }
+    }
+
+    private void OnObjectSelected(DbObject obj) => _selectedObject = obj;
+}

@@ -1,0 +1,147 @@
+@using DeployTool.Models
+
+<div class="tree-node @(IsSelected ? "selected" : "")">
+    <div class="tree-row" @onclick="Select">
+        <span class="tree-toggle" @onclick:stopPropagation="true" @onclick="ToggleExpand">
+            @if (_hasChildren)
+            {
+                <i class="bi @(_isExpanded ? "bi-chevron-down" : "bi-chevron-right")"></i>
+            }
+        </span>
+
+        <span class="tree-icon">@_icon</span>
+        <span class="tree-label">@_displayName</span>
+
+        <div class="tree-badges">
+            @if (_hasChildren)
+            {
+                @if (_addedCount > 0)   { <span class="badge badge-added">+@_addedCount</span> }
+                @if (_deletedCount > 0) { <span class="badge badge-deleted">-@_deletedCount</span> }
+                @if (_modifiedCount > 0){ <span class="badge badge-changed">~@_modifiedCount</span> }
+            }
+            else if (Item is not null)
+            {
+                <span class="badge @_statusBadgeClass">@Item.StatusIcon</span>
+                @if (Item.IsDowngrade)
+                {
+                    <span title="다운그레이드 감지" style="font-size:11px;">⚠️</span>
+                }
+            }
+        </div>
+    </div>
+
+    @* Children are only rendered when expanded — DOM virtualization *@
+    @if (_isExpanded && _hasChildren)
+    {
+        <div class="tree-children">
+            @foreach (var child in _visibleChildren)
+            {
+                <FileTreeNode
+                    Item="@child.Item"
+                    FolderName="@child.FolderName"
+                    Children="@child.Children"
+                    Depth="@(Depth + 1)"
+                    ShowChangesOnly="@ShowChangesOnly"
+                    SelectedItem="@SelectedItem"
+                    OnSelect="@OnSelect" />
+            }
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter] public FileChangeItem? Item { get; set; }
+    [Parameter] public string? FolderName { get; set; }
+    [Parameter] public List<FileTreeNodeModel> Children { get; set; } = [];
+    [Parameter] public bool ShowChangesOnly { get; set; }
+    [Parameter] public EventCallback<FileChangeItem?> OnSelect { get; set; }
+    [Parameter] public FileChangeItem? SelectedItem { get; set; }
+    [Parameter] public int Depth { get; set; }
+
+    // Pre-computed on parameter set — never recalculated on re-render
+    private bool _isExpanded;
+    private bool _hasChildren;
+    private string _displayName = string.Empty;
+    private string _icon = string.Empty;
+    private string _statusBadgeClass = string.Empty;
+    private int _addedCount;
+    private int _deletedCount;
+    private int _modifiedCount;
+    private List<FileTreeNodeModel> _visibleChildren = [];
+
+    private bool IsSelected => SelectedItem is not null && SelectedItem == Item;
+
+    protected override void OnParametersSet()
+    {
+        _hasChildren = Children.Count > 0;
+        _displayName = FolderName ?? Path.GetFileName(Item?.RelativePath) ?? string.Empty;
+
+        // Root-level folders open by default; deeper levels closed
+        if (!_hasChildren)
+            _isExpanded = false;
+        else if (Depth == 0)
+            _isExpanded = true;
+        // else: keep current state (user toggled)
+
+        _icon = GetFileIcon();
+        _statusBadgeClass = GetStatusBadgeClass();
+
+        if (_hasChildren)
+        {
+            // Cache descendant counts — computed once per parameter change
+            _addedCount   = CountDescendants(Children, FileChangeStatus.Added);
+            _deletedCount = CountDescendants(Children, FileChangeStatus.Deleted);
+            _modifiedCount = CountDescendants(Children, FileChangeStatus.Modified);
+        }
+
+        RefreshVisibleChildren();
+    }
+
+    private void RefreshVisibleChildren()
+    {
+        _visibleChildren = ShowChangesOnly
+            ? Children.Where(c => c.HasChanges).ToList()
+            : Children;
+    }
+
+    private void ToggleExpand()
+    {
+        _isExpanded = !_isExpanded;
+    }
+
+    private void Select() => OnSelect.InvokeAsync(Item);
+
+    private string GetFileIcon()
+    {
+        if (_hasChildren) return "📁";
+        var ext = Path.GetExtension(Item?.RelativePath ?? string.Empty).ToLowerInvariant();
+        return ext switch
+        {
+            ".dll" or ".exe" => "⚙️",
+            ".pdb"           => "🔍",
+            ".json"          => "{ }",
+            ".xml" or ".config" => "📄",
+            _                => "📝"
+        };
+    }
+
+    private string GetStatusBadgeClass() => Item?.Status switch
+    {
+        FileChangeStatus.Added    => "badge-added",
+        FileChangeStatus.Deleted  => "badge-deleted",
+        FileChangeStatus.Modified => "badge-changed",
+        _                         => "badge-same"
+    };
+
+    private static int CountDescendants(List<FileTreeNodeModel> nodes, FileChangeStatus status)
+    {
+        var count = 0;
+        foreach (var node in nodes)
+        {
+            if (node.Item?.Status == status) count++;
+            if (node.Children.Count > 0)
+                count += CountDescendants(node.Children, status);
+        }
+        return count;
+    }
+}

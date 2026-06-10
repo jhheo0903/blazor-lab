@@ -1,0 +1,221 @@
+@using DeployTool.Models
+@using DeployTool.Services
+@inject JsonDiffService JsonDiffService
+
+<div style="height:100%;display:flex;flex-direction:column;gap:0;">
+
+    @* ── Action bar ─────────────────────────────────────────────── *@
+    <div class="diff-actionbar">
+        <span class="diff-filename">
+            <i class="bi bi-braces" style="font-size:12px;opacity:.6;"></i>
+            @Path.GetFileName(Item.RelativePath)
+        </span>
+        <span class="diff-filepath">@Path.GetDirectoryName(Item.RelativePath)</span>
+
+        <div style="flex:1;"></div>
+
+        @if (Item.Decision != DeployDecisionValue.Pending)
+        {
+            <span class="decision-badge @GetDecisionClass()">
+                <i class="bi @GetDecisionIcon()"></i>@GetDecisionLabel()
+            </span>
+        }
+
+        <button class="btn btn-outline-secondary btn-sm" @onclick="KeepAll">
+            <i class="bi bi-lock"></i> 전체 운영
+        </button>
+        <button class="btn btn-outline-primary btn-sm" @onclick="ApplyAll">
+            <i class="bi bi-box-arrow-in-down"></i> 전체 배포
+        </button>
+        <button class="btn btn-primary btn-sm" @onclick="ApplyMergeAsync" disabled="@_isMerging">
+            @if (_isMerging)
+            {
+                <span class="spinner-border spinner-border-sm me-1"></span>
+            }
+            else
+            {
+                <i class="bi bi-git me-1"></i>
+            }
+            머지 적용
+        </button>
+    </div>
+
+    @if (!JsonDiffs.Any())
+    {
+        <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;flex:1;color:var(--c-text-3);gap:8px;">
+            <i class="bi bi-check-circle" style="font-size:28px;color:var(--c-green);"></i>
+            <span style="font-size:13px;">변경된 JSON 키 없음</span>
+        </div>
+    }
+    else
+    {
+        <div style="flex:1;display:flex;flex-direction:column;min-height:0;overflow:hidden;">
+
+            @* ── Per-key merge table ──────────────────────────────── *@
+            <div style="flex:1;overflow:auto;min-height:0;">
+                <table class="json-merge-table">
+                    <thead>
+                        <tr>
+                            <th style="width:220px;">키 경로</th>
+                            <th>운영 값</th>
+                            <th>배포 값</th>
+                            <th style="width:160px;text-align:center;">결정</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var diff in JsonDiffs)
+                        {
+                            <tr class="@GetRowClass(diff)">
+                                <td class="json-key-path-cell">
+                                    @diff.KeyPath
+                                    @if (diff.IsSensitive)
+                                    {
+                                        <i class="bi bi-lock-fill" style="font-size:10px;color:var(--c-yellow);margin-left:4px;" title="민감한 키"></i>
+                                    }
+                                </td>
+                                <td class="json-val-cell @(diff.Decision == JsonKeyDecision.UseProduction ? "json-val-active" : "")">
+                                    @GetDisplayValue(diff.ProductionValue, diff.Status, isProduction: true)
+                                </td>
+                                <td class="json-val-cell @(diff.Decision == JsonKeyDecision.UseDeploy ? "json-val-active" : "")">
+                                    @GetDisplayValue(diff.DeployValue, diff.Status, isProduction: false)
+                                </td>
+                                <td style="text-align:center;">
+                                    <div class="json-decision-toggle">
+                                        <button class="@GetToggleClass(diff, JsonKeyDecision.UseProduction)"
+                                                @onclick="() => SetDecision(diff, JsonKeyDecision.UseProduction)"
+                                                title="운영 값 유지">
+                                            <i class="bi bi-hdd-stack"></i> 운영
+                                        </button>
+                                        <button class="@GetToggleClass(diff, JsonKeyDecision.UseDeploy)"
+                                                @onclick="() => SetDecision(diff, JsonKeyDecision.UseDeploy)"
+                                                title="배포 값 적용">
+                                            <i class="bi bi-box-arrow-in-down"></i> 배포
+                                        </button>
+                                    </div>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+
+            @* ── Merged JSON preview ──────────────────────────────── *@
+            @if (_mergePreview is not null)
+            {
+                <div class="json-preview-pane">
+                    <div class="json-preview-header">
+                        <i class="bi bi-eye me-1"></i>머지 결과 미리보기
+                        <button class="btn-close-preview" @onclick="() => _mergePreview = null" title="닫기">
+                            <i class="bi bi-x"></i>
+                        </button>
+                    </div>
+                    <pre class="json-preview-body">@_mergePreview</pre>
+                </div>
+            }
+
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter] public FileChangeItem Item { get; set; } = default!;
+    [Parameter] public List<JsonKeyDiff> JsonDiffs { get; set; } = [];
+    [Parameter] public EventCallback OnDecisionChanged { get; set; }
+
+    private string? _mergePreview;
+    private bool _isMerging;
+
+    private void SetDecision(JsonKeyDiff diff, JsonKeyDecision decision)
+    {
+        diff.Decision = decision;
+        // Refresh preview if already visible
+        if (_mergePreview is not null)
+            _ = RefreshPreviewAsync();
+    }
+
+    private void KeepAll()
+    {
+        foreach (var d in JsonDiffs)
+            d.Decision = JsonKeyDecision.UseProduction;
+        if (_mergePreview is not null)
+            _ = RefreshPreviewAsync();
+    }
+
+    private void ApplyAll()
+    {
+        foreach (var d in JsonDiffs)
+            d.Decision = JsonKeyDecision.UseDeploy;
+        if (_mergePreview is not null)
+            _ = RefreshPreviewAsync();
+    }
+
+    private async Task RefreshPreviewAsync()
+    {
+        _mergePreview = await JsonDiffService.BuildMergedJsonAsync(
+            Item.ProductionFullPath, Item.DeployFullPath, JsonDiffs);
+        StateHasChanged();
+    }
+
+    private async Task ApplyMergeAsync()
+    {
+        _isMerging = true;
+        StateHasChanged();
+        try
+        {
+            var merged = await JsonDiffService.BuildMergedJsonAsync(
+                Item.ProductionFullPath, Item.DeployFullPath, JsonDiffs);
+            Item.MergedJsonContent = merged;
+            Item.Decision = DeployDecisionValue.Apply;
+            _mergePreview = merged;
+            await OnDecisionChanged.InvokeAsync();
+        }
+        finally
+        {
+            _isMerging = false;
+        }
+    }
+
+    private static string GetDisplayValue(string? value, JsonKeyStatus status, bool isProduction)
+    {
+        if (value is null)
+            return status == JsonKeyStatus.OnlyInDeploy && isProduction ? "(없음)"
+                 : status == JsonKeyStatus.OnlyInProduction && !isProduction ? "(없음)"
+                 : "—";
+        return value;
+    }
+
+    private static string GetRowClass(JsonKeyDiff diff) => diff.Status switch
+    {
+        JsonKeyStatus.OnlyInProduction => "json-row-deleted",
+        JsonKeyStatus.OnlyInDeploy     => "json-row-inserted",
+        JsonKeyStatus.ValueChanged     => "json-row-modified",
+        _                              => string.Empty
+    };
+
+    private static string GetToggleClass(JsonKeyDiff diff, JsonKeyDecision target)
+        => diff.Decision == target
+            ? "json-toggle-btn json-toggle-active"
+            : "json-toggle-btn";
+
+    private string GetDecisionClass() => Item.Decision switch
+    {
+        DeployDecisionValue.Apply          => "decision-apply",
+        DeployDecisionValue.KeepProduction => "decision-keep",
+        DeployDecisionValue.Skip           => "decision-skip",
+        _                                  => string.Empty
+    };
+
+    private string GetDecisionIcon() => Item.Decision switch
+    {
+        DeployDecisionValue.Apply          => "bi-check-circle-fill me-1",
+        DeployDecisionValue.KeepProduction => "bi-lock-fill me-1",
+        _                                  => "bi-skip-forward-fill me-1"
+    };
+
+    private string GetDecisionLabel() => Item.Decision switch
+    {
+        DeployDecisionValue.Apply          => "머지 적용",
+        DeployDecisionValue.KeepProduction => "운영 유지",
+        _                                  => "스킵"
+    };
+}

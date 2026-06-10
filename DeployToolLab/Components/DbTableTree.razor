@@ -1,0 +1,39 @@
+@using DeployTool.Models
+
+<div class="db-tree">
+    <div style="padding:8px 8px 4px;">
+        <div style="position:relative;">
+            <i class="bi bi-search" style="position:absolute;left:10px;top:50%;transform:translateY(-50%);color:var(--text-muted);font-size:12px;"></i>
+            <input class="form-control" style="padding-left:30px!important;font-size:12.5px;"
+                   placeholder="검색..." @bind="_filter" @bind:event="oninput" />
+        </div>
+    </div>
+
+    <div style="padding:8px 8px 4px 12px;font-size:12px;font-weight:700;color:var(--text-muted);letter-spacing:.3px;">
+        <i class="bi bi-database me-1"></i>@Schema.DatabaseName
+    </div>
+
+    <DbTreeSection Title="Tables" Icon="bi-table" Items="@FilteredTables"
+                   SelectedObject="@SelectedObject" OnSelect="@OnSelect" />
+    <DbTreeSection Title="Views" Icon="bi-eye" Items="@FilteredViews"
+                   SelectedObject="@SelectedObject" OnSelect="@OnSelect" />
+    <DbTreeSection Title="Stored Procedures" Icon="bi-gear" Items="@FilteredSPs"
+                   SelectedObject="@SelectedObject" OnSelect="@OnSelect" />
+</div>
+
+@code {
+    [Parameter] public DbSchemaInfo Schema { get; set; } = new();
+    [Parameter] public DbObject? SelectedObject { get; set; }
+    [Parameter] public EventCallback<DbObject> OnSelect { get; set; }
+
+    private string _filter = string.Empty;
+
+    private IEnumerable<DbObject> FilteredTables => Filter(Schema.Tables);
+    private IEnumerable<DbObject> FilteredViews  => Filter(Schema.Views);
+    private IEnumerable<DbObject> FilteredSPs    => Filter(Schema.StoredProcedures);
+
+    private IEnumerable<DbObject> Filter(IEnumerable<DbObject> items) =>
+        string.IsNullOrWhiteSpace(_filter)
+            ? items
+            : items.Where(i => i.Name.Contains(_filter, StringComparison.OrdinalIgnoreCase));
+}

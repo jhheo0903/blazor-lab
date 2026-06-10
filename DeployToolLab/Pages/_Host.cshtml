@@ -1,0 +1,117 @@
+@page "/"
+@using Microsoft.AspNetCore.Components.Web
+@namespace DeployTool.Pages
+@addTagHelper *, Microsoft.AspNetCore.Mvc.TagHelpers
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <base href="~/" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+    <link rel="stylesheet"
+          href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css"
+          integrity="sha384-T3c6CoIi6uLrA9TneNEoa7RxnatzjcDSCmG1MXxSR1GAsXEV/Dwwykc2MPK8M2HN"
+          crossorigin="anonymous" />
+    <link rel="stylesheet"
+          href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css"
+          integrity="sha384-tViUnnbplMdV8hCS5tOC31QqLOS2G2JzMGiIn9xJLMYFbHBBRBut4XTBE60CkJH"
+          crossorigin="anonymous" />
+    <link href="DeployTool.styles.css" rel="stylesheet" />
+    <link href="css/site.css" rel="stylesheet" />
+    <link rel="icon" type="image/png" href="favicon.png"/>
+    <title>DeployTool</title>
+    <component type="typeof(HeadOutlet)" render-mode="ServerPrerendered" />
+</head>
+<body>
+    <component type="typeof(App)" render-mode="ServerPrerendered" />
+
+    <%-- Reconnect overlay — shown by Blazor when SignalR drops --%>
+    <div id="components-reconnect-modal" style="
+        display:none;
+        position:fixed;inset:0;z-index:99999;
+        background:rgba(0,0,0,.6);
+        backdrop-filter:blur(3px);
+        align-items:center;justify-content:center;">
+        <div style="
+            background:#1a1d23;
+            border:1px solid rgba(255,255,255,.1);
+            border-radius:12px;
+            padding:28px 32px;
+            text-align:center;
+            min-width:280px;
+            font-family:'Inter',system-ui,sans-serif;
+            color:#e8eaf0;">
+            <div id="reconnect-status">
+                <div class="spinner-border mb-3" style="color:#4d94ff;width:28px;height:28px;"></div>
+                <div style="font-size:14px;font-weight:600;margin-bottom:6px;">서버 재연결 중...</div>
+                <div style="font-size:12px;color:#9399a6;">잠시 기다려 주세요.</div>
+            </div>
+            <div id="reconnect-failed" style="display:none;">
+                <i class="bi bi-wifi-off" style="font-size:32px;color:#ff5f57;display:block;margin-bottom:12px;"></i>
+                <div style="font-size:14px;font-weight:600;margin-bottom:6px;">연결이 끊어졌습니다</div>
+                <div style="font-size:12px;color:#9399a6;margin-bottom:16px;">서버와의 연결을 복구하지 못했습니다.</div>
+                <button onclick="location.reload()" style="
+                    background:#4d94ff;border:none;color:#fff;
+                    border-radius:6px;padding:8px 20px;
+                    font-size:13px;font-weight:600;cursor:pointer;">
+                    페이지 새로고침
+                </button>
+            </div>
+            <div id="reconnect-rejected" style="display:none;">
+                <i class="bi bi-x-circle" style="font-size:32px;color:#ff5f57;display:block;margin-bottom:12px;"></i>
+                <div style="font-size:14px;font-weight:600;margin-bottom:6px;">세션이 만료되었습니다</div>
+                <div style="font-size:12px;color:#9399a6;margin-bottom:16px;">서버 세션이 더 이상 유효하지 않습니다.</div>
+                <button onclick="location.reload()" style="
+                    background:#4d94ff;border:none;color:#fff;
+                    border-radius:6px;padding:8px 20px;
+                    font-size:13px;font-weight:600;cursor:pointer;">
+                    페이지 새로고침
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <div id="blazor-error-ui" style="display:none;">
+        An unhandled error occurred.
+        <a href="" class="reload">Reload</a>
+        <a class="dismiss">🗙</a>
+    </div>
+
+    <script src="js/mergeEditor.js"></script>
+    <script src="_framework/blazor.server.js" autostart="false"></script>
+    <script>
+        Blazor.start({
+            reconnectionOptions: {
+                // 재연결 시도: 0s, 2s, 10s, 30s, 60s 간격으로 최대 20회
+                maxRetries: 20,
+                retryIntervalMilliseconds: (previousAttempts, maxRetries) => {
+                    if (previousAttempts === 0) return 0;
+                    if (previousAttempts < 3)  return 2000;
+                    if (previousAttempts < 8)  return 10000;
+                    return 30000;
+                }
+            },
+            reconnectionHandler: {
+                onConnectionDown: (options, error) => {
+                    const modal = document.getElementById('components-reconnect-modal');
+                    modal.style.display = 'flex';
+                    document.getElementById('reconnect-status').style.display = 'block';
+                    document.getElementById('reconnect-failed').style.display = 'none';
+                    document.getElementById('reconnect-rejected').style.display = 'none';
+                },
+                onConnectionUp: () => {
+                    document.getElementById('components-reconnect-modal').style.display = 'none';
+                },
+                onFailedToReconnect: () => {
+                    document.getElementById('reconnect-status').style.display = 'none';
+                    document.getElementById('reconnect-failed').style.display = 'block';
+                }
+            }
+        });
+    </script>
+</body>
+</html>

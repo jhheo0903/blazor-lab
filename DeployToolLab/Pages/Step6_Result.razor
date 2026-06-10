@@ -1,0 +1,147 @@
+@page "/deploy/result"
+@using DeployTool.Models
+@using DeployTool.Services
+@inject DeploySession Session
+@inject BackupService BackupService
+@inject NavigationManager Nav
+
+<PageTitle>결과 확인 — DeployTool</PageTitle>
+
+<div class="page-header">
+    <h1 class="page-title">
+        <span class="title-icon" style="background:var(--green-muted);color:var(--green);"><i class="bi bi-clipboard-check"></i></span>
+        배포 결과
+    </h1>
+</div>
+
+<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px;max-width:560px;margin-bottom:28px;">
+    <div class="result-card success">
+        <i class="bi bi-check-circle-fill" style="font-size:22px;color:var(--green);"></i>
+        <div class="result-number">@_successCount</div>
+        <div class="result-label">성공</div>
+    </div>
+    <div class="result-card failure">
+        <i class="bi bi-x-circle-fill" style="font-size:22px;color:var(--red);"></i>
+        <div class="result-number">@_errorCount</div>
+        <div class="result-label">실패</div>
+    </div>
+    <div class="result-card skipped">
+        <i class="bi bi-skip-forward-circle" style="font-size:22px;color:var(--text-muted);"></i>
+        <div class="result-number">@Session.SkipItems.Count()</div>
+        <div class="result-label">스킵</div>
+    </div>
+</div>
+
+@if (_errorCount > 0)
+{
+    <div class="card mb-4" style="border-color:var(--red)!important;max-width:640px;">
+        <div class="card-header" style="color:var(--red)!important;">
+            <i class="bi bi-exclamation-triangle me-2"></i>실패 항목
+        </div>
+        <div style="max-height:200px;overflow-y:auto;">
+            @foreach (var log in _errorLogs)
+            {
+                <div style="padding:8px 20px;border-bottom:1px solid var(--border-subtle);font-family:var(--font-mono);font-size:12.5px;color:var(--red);">
+                    @log.Message
+                </div>
+            }
+        </div>
+    </div>
+}
+
+@if (_statusMessage is not null)
+{
+    <div class="alert @(_statusIsError ? "alert-danger" : "alert-success") mb-4" style="max-width:560px;">
+        <i class="bi @(_statusIsError ? "bi-exclamation-circle" : "bi-check-circle") me-2"></i>
+        @_statusMessage
+    </div>
+}
+
+<div style="display:flex;gap:10px;flex-wrap:wrap;max-width:560px;">
+    @if (Session.BackupPath is not null)
+    {
+        <button class="btn btn-warning" @onclick="RollbackAsync" disabled="@_isRollingBack">
+            @if (_isRollingBack)
+            {
+                <span class="spinner-border spinner-border-sm"></span>
+                <span>롤백 중...</span>
+            }
+            else
+            {
+                <i class="bi bi-arrow-counterclockwise"></i>
+                <span>롤백 (백업으로 복원)</span>
+            }
+        </button>
+    }
+
+    <button class="btn btn-outline-danger" @onclick="CleanQuarantine">
+        <i class="bi bi-trash3"></i>
+        _quarantine 정리
+    </button>
+
+    <button class="btn btn-outline-secondary ms-auto" @onclick="StartNew">
+        <i class="bi bi-arrow-repeat"></i>
+        새 배포 시작
+    </button>
+</div>
+
+@code {
+    private int _successCount;
+    private int _errorCount;
+    private List<DeployLogEntry> _errorLogs = [];
+    private bool _isRollingBack;
+    private string? _statusMessage;
+    private bool _statusIsError;
+
+    protected override void OnInitialized()
+    {
+        _errorLogs = Session.DeployLog.Where(l => l.IsError).ToList();
+        _errorCount = _errorLogs.Count;
+        _successCount = Session.ApplyItems.Count() - _errorCount;
+    }
+
+    private async Task RollbackAsync()
+    {
+        _isRollingBack = true;
+        try
+        {
+            await BackupService.RestoreBackupAsync(Session.BackupPath!, Session.ProductionPath);
+            _statusMessage = "롤백이 완료되었습니다.";
+            _statusIsError = false;
+        }
+        catch (Exception ex)
+        {
+            _statusMessage = $"롤백 실패: {ex.Message}";
+            _statusIsError = true;
+        }
+        finally
+        {
+            _isRollingBack = false;
+        }
+    }
+
+    private void CleanQuarantine()
+    {
+        try
+        {
+            DeployExecutor.CleanQuarantine(Session.ProductionPath);
+            _statusMessage = "_quarantine 폴더가 정리되었습니다.";
+            _statusIsError = false;
+        }
+        catch (Exception ex)
+        {
+            _statusMessage = $"정리 실패: {ex.Message}";
+            _statusIsError = true;
+        }
+    }
+
+    private void StartNew()
+    {
+        Session.CurrentStep = DeployStep.PathConfig;
+        Session.Changes.Clear();
+        Session.DeployLog.Clear();
+        Session.BackupPath = null;
+        Session.IsDeployDone = false;
+        Nav.NavigateTo("/deploy");
+    }
+}

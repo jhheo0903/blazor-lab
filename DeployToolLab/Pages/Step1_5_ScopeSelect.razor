@@ -1,0 +1,175 @@
+@page "/deploy/scope"
+@using DeployTool.Models
+@using DeployTool.Services
+@inject DeploySession Session
+@inject FileScanner FileScanner
+@inject NavigationManager Nav
+
+<PageTitle>범위 선택 — DeployTool</PageTitle>
+
+<div class="page-header">
+    <h1 class="page-title">
+        <span class="title-icon"><i class="bi bi-ui-checks"></i></span>
+        배포 범위 선택
+    </h1>
+    <p class="page-subtitle">비교할 범위를 선택하세요. 프로젝트 단위로 좁히면 더 빠릅니다.</p>
+</div>
+
+<div style="max-width:680px;display:flex;flex-direction:column;gap:20px;">
+
+    <div>
+        <div class="section-label">비교 모드</div>
+        <div class="d-flex gap-3">
+            <label class="mode-card @(Session.Scope.Mode == ScopeMode.FullCompare ? "active" : "")"
+                   @onclick="() => Session.Scope.Mode = ScopeMode.FullCompare">
+                <div class="mode-card-radio @(Session.Scope.Mode == ScopeMode.FullCompare ? "checked" : "")">
+                    @if (Session.Scope.Mode == ScopeMode.FullCompare)
+                    { <div class="mode-card-radio-dot"></div> }
+                </div>
+                <div>
+                    <div style="font-weight:600;font-size:13.5px;margin-bottom:3px;">전체 비교</div>
+                    <div style="font-size:12px;color:var(--c-text-3);">예상 @Session.Scope.EstimatedTotalFiles 개 파일 · 제외 패턴 자동 적용</div>
+                </div>
+            </label>
+
+            <label class="mode-card @(Session.Scope.Mode == ScopeMode.ProjectSelect ? "active" : "")"
+                   @onclick="() => Session.Scope.Mode = ScopeMode.ProjectSelect">
+                <div class="mode-card-radio @(Session.Scope.Mode == ScopeMode.ProjectSelect ? "checked" : "")">
+                    @if (Session.Scope.Mode == ScopeMode.ProjectSelect)
+                    { <div class="mode-card-radio-dot"></div> }
+                </div>
+                <div>
+                    <div style="font-weight:600;font-size:13.5px;margin-bottom:3px;">프로젝트 선택</div>
+                    <div style="font-size:12px;color:var(--c-text-3);">원하는 폴더만 골라서 빠르게 비교</div>
+                </div>
+            </label>
+        </div>
+    </div>
+
+    @if (Session.Scope.Mode == ScopeMode.ProjectSelect)
+    {
+        <div>
+            <div class="folder-checklist">
+                @foreach (var folder in Session.Scope.AvailableFolders)
+                {
+                    <label class="folder-check-row">
+                        <input class="form-check-input" type="checkbox"
+                               checked="@folder.IsSelected"
+                               @onchange="e => folder.IsSelected = (bool)(e.Value ?? false)" />
+                        <span style="font-size:13px;font-family:var(--mono);flex:1;">@folder.Name</span>
+                        @if (!string.IsNullOrEmpty(folder.Badge))
+                        {
+                            <span style="font-size:12px;">@folder.Badge</span>
+                        }
+                        <span style="font-size:11.5px;color:var(--c-text-3);">@folder.EstimatedFileCount 개</span>
+                    </label>
+                }
+            </div>
+            <div style="font-size:12.5px;color:var(--c-text-2);margin-top:8px;">
+                <i class="bi bi-files me-1"></i>예상 대상:
+                <strong style="color:var(--c-text-1);">@Session.Scope.EstimatedTotalFiles 개</strong> 파일
+            </div>
+        </div>
+    }
+    else
+    {
+        <div class="form-section">
+            <label class="form-label"><i class="bi bi-filter me-1"></i>제외 패턴 <span style="color:var(--c-text-3);font-weight:400;">(한 줄에 하나씩)</span></label>
+            <textarea class="form-control" rows="5"
+                      @bind="_excludePatternsText"
+                      @bind:event="oninput"></textarea>
+        </div>
+    }
+
+    @if (_isScanning)
+    {
+        <div class="scan-status-bar">
+            <div class="spinner-border spinner-border-sm"></div>
+            <div style="flex:1;min-width:0;">
+                <div style="display:flex;justify-content:space-between;margin-bottom:6px;">
+                    <span style="font-size:12.5px;font-weight:600;">병렬 스캔 중...</span>
+                    <span style="font-size:12px;color:var(--c-text-2);">@_filesScanned 개 처리됨</span>
+                </div>
+                <div class="progress-bar-track">
+                    <div class="progress-bar-fill" style="width:@(_scanProgressWidth)%;"></div>
+                </div>
+                <div style="font-family:var(--mono);font-size:11.5px;color:var(--c-text-3);margin-top:5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+                    @_currentFile
+                </div>
+            </div>
+        </div>
+
+        @if (_partialChanges.Count > 0)
+        {
+            <div style="font-size:12px;color:var(--c-text-2);">
+                <i class="bi bi-arrow-right-circle me-1" style="color:var(--c-accent);"></i>
+                현재까지 발견:
+                <span style="color:var(--c-green);font-weight:600;">+@_partialChanges.Count(c => c.Status == FileChangeStatus.Added)</span>
+                <span style="color:var(--c-red);font-weight:600;margin-left:6px;">-@_partialChanges.Count(c => c.Status == FileChangeStatus.Deleted)</span>
+                <span style="color:var(--c-yellow);font-weight:600;margin-left:6px;">~@_partialChanges.Count(c => c.Status == FileChangeStatus.Modified)</span>
+            </div>
+        }
+    }
+    else
+    {
+        <button class="btn btn-primary" style="align-self:flex-start;min-width:140px;" @onclick="StartScanAsync">
+            <i class="bi bi-play-fill"></i>
+            <span>분석 시작</span>
+        </button>
+    }
+
+</div>
+
+@code {
+    private bool _isScanning;
+    private string _currentFile = string.Empty;
+    private int _filesScanned;
+    private int _scanProgressWidth = 0;
+    private List<FileChangeItem> _partialChanges = [];
+    private System.Threading.Timer? _progressTimer;
+
+    private string _excludePatternsText
+    {
+        get => string.Join("\n", Session.Scope.ExcludePatterns);
+        set => Session.Scope.ExcludePatterns = [.. value.Split('\n', StringSplitOptions.RemoveEmptyEntries)];
+    }
+
+    private async Task StartScanAsync()
+    {
+        _isScanning = true;
+        _filesScanned = 0;
+        _scanProgressWidth = 0;
+        _partialChanges = [];
+
+        // Force UI to render the scanning state BEFORE the heavy work begins
+        await Task.Yield();
+
+        // Animate the progress bar while scanning
+        _progressTimer = new System.Threading.Timer(_ =>
+        {
+            if (_scanProgressWidth < 92) _scanProgressWidth += 1;
+            InvokeAsync(StateHasChanged);
+        }, null, 400, 200);
+
+        var progress = new Progress<ScanProgress>(p =>
+        {
+            _currentFile = p.CurrentFile;
+            _filesScanned = p.FilesScanned;
+            _partialChanges = p.PartialResults;
+            InvokeAsync(StateHasChanged);
+        });
+
+        try
+        {
+            Session.Changes = await FileScanner.ScanChangesAsync(
+                Session.ProductionPath, Session.DeployPath, Session.Scope, progress);
+            Session.CurrentStep = DeployStep.Scan;
+            Nav.NavigateTo("/deploy/review");
+        }
+        finally
+        {
+            _progressTimer?.Dispose();
+            _isScanning = false;
+        }
+    }
+}

@@ -1,0 +1,141 @@
+@page "/deploy/execute"
+@using DeployTool.Models
+@using DeployTool.Services
+@inject DeploySession Session
+@inject PreflightChecker PreflightChecker
+@inject DeployExecutor DeployExecutor
+@inject NavigationManager Nav
+
+<PageTitle>배포 실행 — DeployTool</PageTitle>
+
+<div class="page-header">
+    <h1 class="page-title">
+        <span class="title-icon" style="background:var(--c-red-dim);color:var(--c-red);"><i class="bi bi-rocket-takeoff"></i></span>
+        배포 실행
+    </h1>
+    <p class="page-subtitle">Pre-flight 검사 후 실제 파일 배포를 실행합니다.</p>
+</div>
+
+<div style="max-width:600px;display:flex;flex-direction:column;gap:20px;">
+
+    @if (!_preflightDone)
+    {
+        <div style="display:flex;flex-direction:column;align-items:center;padding:40px 0;gap:16px;text-align:center;">
+            @if (_isChecking)
+            {
+                <div class="spinner-border" style="width:28px;height:28px;"></div>
+                <div style="font-size:13.5px;color:var(--c-text-2);">시스템 상태 확인 중...</div>
+            }
+            else
+            {
+                <i class="bi bi-shield" style="font-size:40px;color:var(--c-text-3);"></i>
+                <div style="font-size:13.5px;color:var(--c-text-2);">
+                    배포 전 쓰기 권한, 디스크 용량, 파일 잠금 여부를 확인합니다.
+                </div>
+                <button class="btn btn-outline-primary" @onclick="RunPreflightAsync">
+                    <i class="bi bi-play-circle"></i>검사 실행
+                </button>
+            }
+        </div>
+    }
+    else
+    {
+        <div>
+            <div class="section-label">Pre-flight 결과</div>
+            <div class="check-list">
+                @foreach (var check in _preflightResults)
+                {
+                    <div class="check-item">
+                        <div class="check-icon @(check.IsPassed ? "pass" : check.IsWarning ? "warn" : "fail")">
+                            @if (check.IsPassed)      { <i class="bi bi-check-lg"></i> }
+                            else if (check.IsWarning) { <i class="bi bi-exclamation"></i> }
+                            else                      { <i class="bi bi-x-lg"></i> }
+                        </div>
+                        <div>
+                            <div class="check-name">@check.CheckName</div>
+                            <div class="check-msg">@check.Message</div>
+                        </div>
+                    </div>
+                }
+            </div>
+        </div>
+
+        @if (!Session.IsDeployDone)
+        {
+            @if (!CanDeploy)
+            {
+                <div class="alert alert-danger">
+                    <i class="bi bi-exclamation-triangle me-2"></i>
+                    필수 검사 항목 실패. 해결 후 재시도하거나 경고 항목은 확인 후 진행할 수 있습니다.
+                </div>
+            }
+            <button class="btn btn-danger"
+                    style="font-size:14px!important;padding:12px 20px!important;align-self:flex-start;"
+                    @onclick="StartDeployAsync"
+                    disabled="@(Session.IsDeploying || !CanDeploy)">
+                @if (Session.IsDeploying)
+                {
+                    <span class="spinner-border spinner-border-sm"></span>
+                    <span>배포 진행 중...</span>
+                }
+                else
+                {
+                    <i class="bi bi-rocket-takeoff-fill"></i>
+                    <span>배포 시작 (@Session.ApplyItems.Count() 개 파일)</span>
+                }
+            </button>
+        }
+
+        <div>
+            <div class="section-label" style="display:flex;align-items:center;gap:8px;">
+                <i class="bi bi-terminal" style="color:var(--c-green);"></i>배포 로그
+                @if (Session.IsDeploying)
+                {
+                    <span class="spinner-border spinner-border-sm" style="width:10px;height:10px;border-width:1.5px;"></span>
+                }
+            </div>
+            <DeployLog Entries="@Session.DeployLog" />
+        </div>
+
+        @if (Session.IsDeployDone)
+        {
+            <button class="btn btn-success" style="font-size:14px!important;padding:12px 20px!important;align-self:flex-start;" @onclick="GoToResult">
+                <i class="bi bi-clipboard-check"></i>Step 6: 결과 확인
+            </button>
+        }
+    }
+
+</div>
+
+@code {
+    private bool _isChecking;
+    private bool _preflightDone;
+    private List<PreflightCheckResult> _preflightResults = [];
+
+    private bool CanDeploy =>
+        _preflightResults.All(r => r.IsPassed || r.IsWarning);
+
+    private async Task RunPreflightAsync()
+    {
+        _isChecking = true;
+        try
+        {
+            _preflightResults = await PreflightChecker.RunChecksAsync(
+                Session.ProductionPath,
+                Session.BackupPath ?? Session.ProductionPath,
+                Session.ApplyItems);
+            _preflightDone = true;
+        }
+        finally
+        {
+            _isChecking = false;
+        }
+    }
+
+    private async Task StartDeployAsync()
+    {
+        await DeployExecutor.ExecuteDeployAsync(Session);
+    }
+
+    private void GoToResult() => Nav.NavigateTo("/deploy/result");
+}

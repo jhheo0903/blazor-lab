@@ -1,0 +1,118 @@
+@using DeployTool.Models
+
+<div style="height:100%;display:flex;flex-direction:column;">
+
+    <div class="diff-actionbar">
+        <span class="diff-filename">
+            <i class="bi bi-gear" style="font-size:12px;opacity:.6;"></i>
+            @Path.GetFileName(Item.RelativePath)
+        </span>
+        <span class="diff-filepath">@Path.GetDirectoryName(Item.RelativePath)</span>
+
+        <div style="flex:1;"></div>
+
+        @if (Item.Decision != DeployDecisionValue.Pending)
+        {
+            <span class="decision-badge @GetDecisionClass()">
+                <i class="bi @GetDecisionIcon()"></i>@GetDecisionLabel()
+            </span>
+        }
+
+        <button class="btn btn-outline-secondary btn-sm" @onclick="SkipFile">
+            <i class="bi bi-skip-forward"></i> 스킵
+        </button>
+        <button class="btn btn-success btn-sm" @onclick="ApplyFile">
+            <i class="bi bi-check-lg"></i> 적용
+        </button>
+    </div>
+
+    @if (Item.IsDowngrade)
+    {
+        <div class="alert alert-warning" style="margin:12px 16px 0;display:flex;align-items:center;gap:10px;">
+            <i class="bi bi-exclamation-triangle-fill" style="font-size:15px;flex-shrink:0;"></i>
+            <div>
+                <strong>다운그레이드 감지</strong>
+                <div style="font-size:12px;margin-top:2px;">
+                    운영 <code>@Item.ProductionFileVersion</code> → 배포 <code>@Item.DeployFileVersion</code>
+                </div>
+            </div>
+        </div>
+    }
+
+    @* Side-by-side metadata *@
+    <div class="bin-sbs">
+        <div class="bin-side">
+            <div class="bin-side-label">
+                <i class="bi bi-hdd-stack" style="font-size:11px;"></i> 운영
+            </div>
+            <div class="bin-meta-grid">
+                <div class="bin-meta-row"><span>크기</span><span>@FormatSize(Item.ProductionSize)</span></div>
+                <div class="bin-meta-row"><span>수정일</span><span>@Item.ProductionLastModified?.ToString("yyyy-MM-dd HH:mm")</span></div>
+                <div class="bin-meta-row"><span>FileVersion</span>
+                    <span style="color:@(Item.IsDowngrade ? "var(--c-green)" : "inherit");">@(Item.ProductionFileVersion ?? "—")</span>
+                </div>
+                <div class="bin-meta-row"><span>AssemblyVersion</span><span>@(Item.ProductionAssemblyVersion ?? "—")</span></div>
+            </div>
+        </div>
+
+        <div class="bin-sbs-divider">
+            <i class="bi bi-arrow-right" style="color:var(--c-text-3);font-size:14px;"></i>
+        </div>
+
+        <div class="bin-side">
+            <div class="bin-side-label">
+                <i class="bi bi-box-arrow-in-down" style="font-size:11px;"></i> 배포
+            </div>
+            <div class="bin-meta-grid">
+                <div class="bin-meta-row"><span>크기</span><span>@FormatSize(Item.DeploySize)</span></div>
+                <div class="bin-meta-row"><span>수정일</span><span>@Item.DeployLastModified?.ToString("yyyy-MM-dd HH:mm")</span></div>
+                <div class="bin-meta-row"><span>FileVersion</span>
+                    <span style="color:@(Item.IsDowngrade ? "var(--c-red)" : "inherit");">@(Item.DeployFileVersion ?? "—")</span>
+                </div>
+                <div class="bin-meta-row"><span>AssemblyVersion</span><span>@(Item.DeployAssemblyVersion ?? "—")</span></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+@code {
+    [Parameter] public FileChangeItem Item { get; set; } = default!;
+    [Parameter] public EventCallback OnDecisionChanged { get; set; }
+
+    private void ApplyFile()
+    {
+        Item.Decision = DeployDecisionValue.Apply;
+        OnDecisionChanged.InvokeAsync();
+    }
+
+    private void SkipFile()
+    {
+        Item.Decision = DeployDecisionValue.Skip;
+        OnDecisionChanged.InvokeAsync();
+    }
+
+    private string GetDecisionClass() => Item.Decision switch
+    {
+        DeployDecisionValue.Apply => "decision-apply",
+        DeployDecisionValue.Skip  => "decision-skip",
+        _                         => string.Empty
+    };
+
+    private string GetDecisionIcon() => Item.Decision switch
+    {
+        DeployDecisionValue.Apply => "bi-check-circle-fill me-1",
+        _                         => "bi-skip-forward-fill me-1"
+    };
+
+    private string GetDecisionLabel() => Item.Decision switch
+    {
+        DeployDecisionValue.Apply => "적용",
+        _                         => "스킵"
+    };
+
+    private static string FormatSize(long? size) =>
+        size is null ? "—"
+        : size < 1024 ? $"{size} B"
+        : size < 1024 * 1024 ? $"{size / 1024.0:F1} KB"
+        : $"{size / 1024.0 / 1024.0:F1} MB";
+}

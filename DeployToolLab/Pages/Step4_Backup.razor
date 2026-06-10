@@ -1,0 +1,136 @@
+@page "/deploy/backup"
+@using DeployTool.Models
+@using DeployTool.Services
+@inject DeploySession Session
+@inject BackupService BackupService
+@inject NavigationManager Nav
+
+<PageTitle>백업 — DeployTool</PageTitle>
+
+<div class="page-header">
+    <h1 class="page-title">
+        <span class="title-icon"><i class="bi bi-safe2"></i></span>
+        백업
+    </h1>
+    <p class="page-subtitle">배포 전 운영 폴더를 자동으로 백업합니다. 문제 발생 시 롤백에 사용됩니다.</p>
+</div>
+
+<div style="max-width:520px;display:flex;flex-direction:column;gap:16px;">
+
+    @if (Session.BackupPath is null)
+    {
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+            <div class="stat-block">
+                <div class="stat-block-label">적용 예정</div>
+                <div class="stat-block-value" style="color:var(--c-accent);">@Session.ApplyItems.Count()</div>
+                <div class="stat-block-sub">개 파일</div>
+            </div>
+            <div class="stat-block">
+                <div class="stat-block-label">백업 위치</div>
+                <div style="font-size:11.5px;font-family:var(--mono);color:var(--c-text-2);word-break:break-all;margin-top:4px;">
+                    \Backup\backup_[timestamp]
+                </div>
+            </div>
+        </div>
+
+        @if (_errorMessage is not null)
+        {
+            <div class="alert alert-danger">
+                <i class="bi bi-exclamation-circle me-2"></i>@_errorMessage
+            </div>
+        }
+
+        @if (_isBackingUp)
+        {
+            <div class="progress-block">
+                <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
+                    <div class="spinner-border spinner-border-sm"></div>
+                    <span style="font-size:13px;font-weight:600;">백업 진행 중...</span>
+                </div>
+                <div style="font-family:var(--mono);font-size:12px;color:var(--c-text-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-bottom:10px;">
+                    @_backupStatus
+                </div>
+                <div class="progress-bar-track">
+                    <div class="progress-bar-fill" style="width:@(_progressWidth)%;"></div>
+                </div>
+            </div>
+        }
+
+        <button class="btn btn-warning" style="align-self:flex-start;min-width:140px;" @onclick="CreateBackupAsync" disabled="@_isBackingUp">
+            @if (_isBackingUp)
+            {
+                <span class="spinner-border spinner-border-sm"></span>
+                <span>백업 중...</span>
+            }
+            else
+            {
+                <i class="bi bi-archive"></i>
+                <span>백업 시작</span>
+            }
+        </button>
+    }
+    else
+    {
+        <div class="alert alert-success" style="display:flex;align-items:flex-start;gap:12px;">
+            <i class="bi bi-check-circle-fill" style="font-size:18px;flex-shrink:0;margin-top:1px;"></i>
+            <div>
+                <div style="font-weight:700;margin-bottom:4px;">백업 완료</div>
+                <div style="font-family:var(--mono);font-size:12px;word-break:break-all;">@Session.BackupPath</div>
+                <div style="font-size:11.5px;margin-top:4px;opacity:.8;">@Session.BackupCreatedAt?.ToString("yyyy-MM-dd HH:mm:ss")</div>
+            </div>
+        </div>
+
+        <button class="btn btn-primary" style="align-self:flex-start;min-width:160px;" @onclick="GoToExecute">
+            <i class="bi bi-arrow-right-circle"></i>
+            Step 5: 배포 실행
+        </button>
+    }
+
+</div>
+
+@code {
+    private bool _isBackingUp;
+    private string _backupStatus = string.Empty;
+    private string? _errorMessage;
+    private int _progressWidth = 0;
+    private System.Threading.Timer? _progressTimer;
+
+    private async Task CreateBackupAsync()
+    {
+        _isBackingUp = true;
+        _errorMessage = null;
+        _progressWidth = 0;
+
+        _progressTimer = new System.Threading.Timer(_ =>
+        {
+            if (_progressWidth < 90) _progressWidth += 2;
+            InvokeAsync(StateHasChanged);
+        }, null, 0, 300);
+
+        var progress = new Progress<string>(status =>
+        {
+            _backupStatus = status;
+            InvokeAsync(StateHasChanged);
+        });
+
+        try
+        {
+            Session.BackupPath = await BackupService.CreateBackupAsync(
+                Session.ProductionPath, Session.Scope, progress);
+            Session.BackupCreatedAt = DateTime.Now;
+            Session.CurrentStep = DeployStep.Backup;
+            _progressWidth = 100;
+        }
+        catch (Exception ex)
+        {
+            _errorMessage = $"백업 실패: {ex.Message}";
+        }
+        finally
+        {
+            _progressTimer?.Dispose();
+            _isBackingUp = false;
+        }
+    }
+
+    private void GoToExecute() => Nav.NavigateTo("/deploy/execute");
+}

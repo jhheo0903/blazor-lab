@@ -1,0 +1,173 @@
+@page "/deploy/review"
+@using DeployTool.Models
+@using DeployTool.Services
+@using DeployTool.Components
+@inject DeploySession Session
+@inject DiffEngine DiffEngine
+@inject NavigationManager Nav
+
+<PageTitle>변경 검토 — DeployTool</PageTitle>
+
+<div class="page-header" style="margin-bottom:16px;">
+    <h1 class="page-title">
+        <span class="title-icon"><i class="bi bi-git"></i></span>
+        변경사항 검토
+    </h1>
+</div>
+
+<div class="toolbar" style="border-radius:var(--r) var(--r) 0 0;margin-bottom:0;">
+    <div class="stats-row" style="margin-bottom:0;gap:8px;">
+        <div class="stat-chip added">
+            <i class="bi bi-plus-circle-fill" style="font-size:11px;"></i>
+            <span class="stat-count">@_addedCount</span>
+            <span>추가</span>
+        </div>
+        <div class="stat-chip deleted">
+            <i class="bi bi-dash-circle-fill" style="font-size:11px;"></i>
+            <span class="stat-count">@_deletedCount</span>
+            <span>삭제</span>
+        </div>
+        <div class="stat-chip changed">
+            <i class="bi bi-pencil-fill" style="font-size:11px;"></i>
+            <span class="stat-count">@_modifiedCount</span>
+            <span>변경</span>
+        </div>
+        <div class="stat-chip">
+            <span class="stat-count">@_applyCount</span>
+            <span>결정됨</span>
+        </div>
+    </div>
+
+    <div class="toolbar-spacer"></div>
+
+    <label style="user-select:none;display:flex;align-items:center;gap:8px;cursor:pointer;">
+        <div class="form-check form-switch mb-0">
+            <input class="form-check-input" type="checkbox" @bind="_showChangesOnly" @bind:after="OnToggleChangesOnly" />
+        </div>
+        <span style="font-size:12.5px;color:var(--c-text-2);">변경만 보기</span>
+    </label>
+
+    <div style="display:flex;gap:6px;margin-left:8px;">
+        <button class="btn btn-outline-secondary btn-sm" @onclick="SelectAllApply">
+            <i class="bi bi-check2-all"></i> 전체 적용
+        </button>
+        <button class="btn btn-outline-secondary btn-sm" @onclick="SelectAllSkip">
+            <i class="bi bi-skip-forward"></i> 전체 스킵
+        </button>
+    </div>
+</div>
+
+<div style="display:flex;height:calc(100vh - 240px);border:1px solid var(--c-border);border-top:none;border-radius:0 0 var(--r) var(--r);overflow:hidden;">
+    <div class="tree-pane" style="width:280px;min-width:280px;">
+        @foreach (var node in _treeNodes)
+        {
+            <FileTreeNode
+                Item="@node.Item"
+                FolderName="@node.FolderName"
+                Children="@node.Children"
+                Depth="0"
+                ShowChangesOnly="@_showChangesOnly"
+                SelectedItem="@_selectedItem"
+                OnSelect="@OnItemSelected" />
+        }
+    </div>
+
+    <div class="detail-pane" style="flex:1;">
+        @if (_selectedItem is null)
+        {
+            <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;color:var(--c-text-3);">
+                <i class="bi bi-arrow-left-circle" style="font-size:32px;margin-bottom:12px;opacity:.4;"></i>
+                <div style="font-size:13.5px;">왼쪽 트리에서 파일을 선택하세요</div>
+            </div>
+        }
+        else if (_selectedItem.IsBinary)
+        {
+            <BinaryFilePanel Item="@_selectedItem" OnDecisionChanged="OnDecisionChanged" />
+        }
+        else
+        {
+            <TextDiffPanel Item="@_selectedItem"
+                           ProductionText="@_productionText"
+                           DeployText="@_deployText"
+                           OnDecisionChanged="OnDecisionChanged" />
+        }
+    </div>
+</div>
+
+<div style="display:flex;align-items:center;gap:10px;margin-top:16px;">
+    <button class="btn btn-success" @onclick="GoToBackup" disabled="@(_applyCount == 0)">
+        <i class="bi bi-arrow-right-circle"></i>
+        Step 4: 백업 시작
+    </button>
+    @if (_applyCount == 0)
+    {
+        <span style="font-size:12.5px;color:var(--c-text-3);">적용할 파일을 하나 이상 선택하세요.</span>
+    }
+</div>
+
+@code {
+    private bool _showChangesOnly = true;
+    private FileChangeItem? _selectedItem;
+    private List<FileTreeNodeModel> _treeNodes = [];
+    private string _productionText = string.Empty;
+    private string _deployText = string.Empty;
+
+    // Pre-computed counts — avoid LINQ on every render
+    private int _addedCount;
+    private int _deletedCount;
+    private int _modifiedCount;
+    private int _applyCount;
+
+    protected override void OnInitialized()
+    {
+        // BuildTree is O(N) now; run synchronously — no await needed
+        _treeNodes = FileTreeNodeModel.BuildTree(Session.Changes);
+        RefreshCounts();
+    }
+
+    private void RefreshCounts()
+    {
+        _addedCount   = Session.Changes.Count(c => c.Status == FileChangeStatus.Added);
+        _deletedCount = Session.Changes.Count(c => c.Status == FileChangeStatus.Deleted);
+        _modifiedCount = Session.Changes.Count(c => c.Status == FileChangeStatus.Modified);
+        _applyCount   = Session.Changes.Count(c => c.Decision == DeployDecisionValue.Apply);
+    }
+
+    private void OnDecisionChanged()
+    {
+        _applyCount = Session.Changes.Count(c => c.Decision == DeployDecisionValue.Apply);
+        StateHasChanged();
+    }
+
+    private void OnToggleChangesOnly() { /* bind:after triggers re-render automatically */ }
+
+    private async Task OnItemSelected(FileChangeItem? item)
+    {
+        _selectedItem = item;
+        _productionText = string.Empty;
+        _deployText = string.Empty;
+
+        if (item is null || item.IsBinary) return;
+
+        var (_, productionText, deployText) = await DiffEngine.ComputeFileDiffWithTextAsync(
+            item.ProductionFullPath, item.DeployFullPath);
+        _productionText = productionText;
+        _deployText = deployText;
+    }
+
+    private void SelectAllApply()
+    {
+        foreach (var item in Session.ChangedItems)
+            item.Decision = DeployDecisionValue.Apply;
+        RefreshCounts();
+    }
+
+    private void SelectAllSkip()
+    {
+        foreach (var item in Session.ChangedItems)
+            item.Decision = DeployDecisionValue.Skip;
+        RefreshCounts();
+    }
+
+    private void GoToBackup() => Nav.NavigateTo("/deploy/backup");
+}

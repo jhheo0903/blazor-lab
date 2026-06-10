@@ -1,0 +1,57 @@
+@using DeployTool.Models
+@using Microsoft.AspNetCore.SignalR.Client
+@implements IAsyncDisposable
+
+<div class="deploy-log" @ref="_logContainer">
+    @foreach (var entry in Entries)
+    {
+        <div class="log-line @GetLineClass(entry)">
+            <span class="log-time">[@entry.Timestamp.ToString("HH:mm:ss")]</span>
+            <span class="log-msg">@entry.Message</span>
+        </div>
+    }
+    @if (!Entries.Any())
+    {
+        <div style="color:var(--text-muted);font-size:12px;padding:4px 0;">대기 중...</div>
+    }
+</div>
+
+@code {
+    [Parameter] public List<DeployLogEntry> Entries { get; set; } = [];
+    [Parameter] public string HubUrl { get; set; } = "/deployhub";
+
+    private HubConnection? _hubConnection;
+    private ElementReference _logContainer;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _hubConnection = new HubConnectionBuilder()
+            .WithUrl(NavigationManager.ToAbsoluteUri(HubUrl))
+            .WithAutomaticReconnect()
+            .Build();
+
+        _hubConnection.On<string, bool, bool>("ReceiveLog", (msg, isError, isWarning) =>
+        {
+            Entries.Add(new DeployLogEntry { Message = msg, IsError = isError, IsWarning = isWarning });
+            InvokeAsync(StateHasChanged);
+        });
+
+        await _hubConnection.StartAsync();
+    }
+
+    private static string GetLineClass(DeployLogEntry entry)
+    {
+        if (entry.IsError) return "is-error";
+        if (entry.IsWarning) return "is-warn";
+        if (entry.Message.Contains("완료") || entry.Message.Contains("성공")) return "is-ok";
+        return string.Empty;
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_hubConnection is not null)
+            await _hubConnection.DisposeAsync();
+    }
+
+    [Inject] private NavigationManager NavigationManager { get; set; } = default!;
+}

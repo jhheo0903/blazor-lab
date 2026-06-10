@@ -1,0 +1,214 @@
+@using DeployTool.Models
+@using DeployTool.Services
+@using DiffPlex.DiffBuilder.Model
+@inject DiffEngine DiffEngine
+@inject IJSRuntime JS
+
+<div style="height:100%;display:flex;flex-direction:column;">
+
+    @* ── Action bar ─────────────────────────────────────────── *@
+    <div class="diff-actionbar">
+        <span class="diff-filename">
+            <i class="bi bi-file-text" style="font-size:12px;opacity:.6;"></i>
+            @Path.GetFileName(Item.RelativePath)
+        </span>
+        <span class="diff-filepath">@Path.GetDirectoryName(Item.RelativePath)</span>
+        <div style="flex:1;"></div>
+
+        @if (_isDirty)
+        {
+            <span style="font-size:11px;color:var(--c-yellow);">
+                <i class="bi bi-circle-fill" style="font-size:7px;"></i> 수정됨
+            </span>
+        }
+        @if (Item.Decision == DeployDecisionValue.Apply && Item.MergedJsonContent is not null)
+        {
+            <span class="decision-badge decision-apply">
+                <i class="bi bi-check-circle-fill me-1"></i>저장됨
+            </span>
+        }
+
+        <button class="btn btn-outline-secondary btn-sm" @onclick="ResetToOriginal" disabled="@(!_isDirty)">
+            <i class="bi bi-arrow-counterclockwise"></i> 원본 복원
+        </button>
+        <button class="btn btn-primary btn-sm" @onclick="SaveMerge" disabled="@(!_isDirty && Item.MergedJsonContent is null)">
+            <i class="bi bi-floppy"></i> 저장
+        </button>
+    </div>
+
+    @* ── Merge editor ─────────────────────────────────────── *@
+    <div class="merge-editor-layout">
+
+        @* 좌: 운영 (읽기전용) *@
+        <div class="merge-editor-side">
+            <div class="merge-editor-header">
+                <i class="bi bi-hdd-stack" style="font-size:11px;"></i> 운영
+                <span class="sbs-stat" style="color:var(--c-red);margin-left:auto;">
+                    -@_deletedCount
+                </span>
+            </div>
+            <div class="merge-left-lines" id="@_leftId">
+                @foreach (var row in _rows)
+                {
+                    <div class="me-line @row.LeftClass">
+                        <span class="me-lineno">@row.LeftLineNo</span>
+                        <span class="me-text">@row.LeftText</span>
+                    </div>
+                }
+            </div>
+        </div>
+
+        <div class="merge-editor-divider"></div>
+
+        @* 우: 배포 (편집가능) *@
+        <div class="merge-editor-side">
+            <div class="merge-editor-header">
+                <i class="bi bi-pencil-square" style="font-size:11px;"></i> 배포
+                <span class="sbs-stat" style="color:var(--c-green);margin-left:auto;">
+                    +@_insertedCount
+                </span>
+            </div>
+            <textarea id="@_rightId"
+                      class="merge-textarea"
+                      value="@_editText"
+                      @oninput="OnInput"
+                      spellcheck="false"></textarea>
+        </div>
+    </div>
+</div>
+
+@code {
+    [Parameter] public FileChangeItem Item { get; set; } = default!;
+    [Parameter] public string ProductionText { get; set; } = string.Empty;
+    [Parameter] public string DeployText { get; set; } = string.Empty;
+    [Parameter] public EventCallback OnDecisionChanged { get; set; }
+
+    private string _editText = string.Empty;
+    private bool _isDirty;
+
+    private List<MergeRow> _rows = [];
+    private int _deletedCount;
+    private int _insertedCount;
+
+    // Stable IDs so JS scroll-sync survives re-renders
+    private string _leftId = string.Empty;
+    private string _rightId = string.Empty;
+
+    private System.Threading.CancellationTokenSource? _debounceCts;
+
+    protected override void OnParametersSet()
+    {
+        // New file selected — reset state
+        var newId = Item.RelativePath;
+        if (_leftId != "left-" + newId.GetHashCode())
+        {
+            _leftId = "left-" + Math.Abs(newId.GetHashCode());
+            _rightId = "right-" + Math.Abs(newId.GetHashCode());
+            _editText = DeployText;
+            _isDirty = false;
+            RebuildRows(ProductionText, _editText);
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender || _leftId != string.Empty)
+        {
+            try
+            {
+                await JS.InvokeVoidAsync("mergeEditor.syncScroll", _leftId, _rightId);
+            }
+            catch { /* JS not ready yet */ }
+        }
+    }
+
+    private async Task OnInput(ChangeEventArgs e)
+    {
+        _editText = e.Value?.ToString() ?? string.Empty;
+        _isDirty = _editText != DeployText;
+
+        // Debounce diff recompute 300ms
+        _debounceCts?.Cancel();
+        _debounceCts = new System.Threading.CancellationTokenSource();
+        var token = _debounceCts.Token;
+        try
+        {
+            await Task.Delay(300, token);
+            if (!token.IsCancellationRequested)
+            {
+                RebuildRows(ProductionText, _editText);
+                StateHasChanged();
+            }
+        }
+        catch (TaskCanceledException) { }
+    }
+
+    private void RebuildRows(string leftText, string rightText)
+    {
+        var diff = DiffEngine.ComputeSideBySideDiff(leftText, rightText);
+        _rows = BuildRows(diff);
+        _deletedCount = diff.OldText.Lines.Count(l =>
+            l.Type == ChangeType.Deleted || l.Type == ChangeType.Modified);
+        _insertedCount = diff.NewText.Lines.Count(l =>
+            l.Type == ChangeType.Inserted || l.Type == ChangeType.Modified);
+    }
+
+    private static List<MergeRow> BuildRows(SideBySideDiffModel diff)
+    {
+        var rows = new List<MergeRow>();
+        int maxLines = Math.Max(diff.OldText.Lines.Count, diff.NewText.Lines.Count);
+        int leftNo = 0, rightNo = 0;
+
+        for (int i = 0; i < maxLines; i++)
+        {
+            var old = i < diff.OldText.Lines.Count ? diff.OldText.Lines[i] : null;
+            var neu = i < diff.NewText.Lines.Count ? diff.NewText.Lines[i] : null;
+
+            if (old?.Type != ChangeType.Imaginary) leftNo++;
+            if (neu?.Type != ChangeType.Imaginary) rightNo++;
+
+            rows.Add(new MergeRow
+            {
+                LeftLineNo  = old?.Type == ChangeType.Imaginary ? "" : leftNo.ToString(),
+                LeftText    = old?.Text ?? "",
+                LeftClass   = GetClass(old?.Type),
+            });
+        }
+        return rows;
+    }
+
+    private static string GetClass(ChangeType? t) => t switch
+    {
+        ChangeType.Deleted   => "me-deleted",
+        ChangeType.Modified  => "me-modified",
+        ChangeType.Inserted  => "me-inserted",
+        ChangeType.Imaginary => "me-imaginary",
+        _                    => ""
+    };
+
+    private void ResetToOriginal()
+    {
+        _editText = DeployText;
+        _isDirty = false;
+        Item.MergedJsonContent = null;
+        if (Item.Decision == DeployDecisionValue.Apply)
+            Item.Decision = DeployDecisionValue.Pending;
+        RebuildRows(ProductionText, _editText);
+        OnDecisionChanged.InvokeAsync();
+    }
+
+    private void SaveMerge()
+    {
+        Item.MergedJsonContent = _editText;
+        Item.Decision = DeployDecisionValue.Apply;
+        _isDirty = false;
+        OnDecisionChanged.InvokeAsync();
+    }
+
+    private sealed class MergeRow
+    {
+        public string LeftLineNo { get; init; } = "";
+        public string LeftText   { get; init; } = "";
+        public string LeftClass  { get; init; } = "";
+    }
+}
