@@ -5,6 +5,13 @@ using Microsoft.AspNetCore.Components.Server;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// When running from source in non-Development environments,
+// static web assets (e.g., /_framework/*) are not enabled automatically.
+if (!builder.Environment.IsDevelopment())
+{
+    builder.WebHost.UseStaticWebAssets();
+}
+
 builder.Services.AddRazorPages();
 
 // SignalR circuit options — extend timeouts so the page stays alive during idle
@@ -42,9 +49,8 @@ if (!app.Environment.IsDevelopment())
 {
     app.UseExceptionHandler("/Error");
     app.UseHsts();
+    app.UseHttpsRedirection();
 }
-
-app.UseHttpsRedirection();
 app.UseStaticFiles();
 app.UseRouting();
 

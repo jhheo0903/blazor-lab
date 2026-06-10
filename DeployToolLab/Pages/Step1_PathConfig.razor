@@ -42,7 +42,12 @@
         </div>
     }
 
-    <button class="btn btn-primary" style="align-self:flex-start;min-width:160px;" @onclick="StartQuickScanAsync" disabled="@_isScanning">
+        <button type="button"
+            class="btn btn-primary"
+            style="align-self:flex-start;min-width:160px;"
+            @onclick="StartQuickScanAsync"
+            @onclick:preventDefault="true"
+            disabled="@_isScanning">
         @if (_isScanning)
         {
             <span class="spinner-border spinner-border-sm"></span>
@@ -93,6 +98,10 @@
             Session.Scope = new ScopeSelection { AvailableFolders = folders };
             Session.CurrentStep = DeployStep.ScopeSelect;
             Nav.NavigateTo("/deploy/scope");
+        }
+        catch (Exception ex)
+        {
+            _errorMessage = $"빠른 스캔 중 오류가 발생했습니다: {ex.Message}";
         }
         finally
         {

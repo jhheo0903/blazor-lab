@@ -16,6 +16,7 @@ public class FileTreeNodeModel
     {
         // Single-pass O(N) build using persistent child dictionaries
         var root = new FolderBucket();
+        var rootFiles = new List<FileChangeItem>();
 
         foreach (var item in items)
         {
@@ -23,10 +24,34 @@ public class FileTreeNodeModel
                 [Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar],
                 StringSplitOptions.RemoveEmptyEntries);
 
-            root.Insert(parts, 0, item);
+            if (parts.Length == 1)
+            {
+                // Root-level file — collect separately
+                rootFiles.Add(item);
+            }
+            else
+            {
+                root.Insert(parts, 0, item);
+            }
         }
 
-        return root.ToNodes();
+        var result = root.ToNodes();
+
+        // If root files exist, prepend them as a grouped "(ROOT FILES)" folder
+        if (rootFiles.Count > 0)
+        {
+            var rootFileNode = new FileTreeNodeModel
+            {
+                FolderName = "(ROOT FILES)"
+            };
+            foreach (var file in rootFiles.OrderBy(f => Path.GetFileName(f.RelativePath), StringComparer.OrdinalIgnoreCase))
+            {
+                rootFileNode.Children.Add(new FileTreeNodeModel { Item = file });
+            }
+            result.Insert(0, rootFileNode);
+        }
+
+        return result;
     }
 
     private sealed class FolderBucket

@@ -1043,6 +1043,13 @@ div[style*="grid-column:1"].sbs-row { border-right: 1px solid var(--c-border); }
   border-left: 1px solid var(--c-border-sub);
 }
 
+/* Blazor dev-time error UI can sit on top of the app and swallow clicks.
+   Keep hidden by default unless explicitly shown via script. */
+#blazor-error-ui {
+  display: none !important;
+  pointer-events: none !important;
+}
+
 /* ─────────────────────────────────────────────────────
    Detail pane
    ───────────────────────────────────────────────────── */

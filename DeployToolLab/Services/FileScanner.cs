@@ -6,6 +6,8 @@ namespace DeployTool.Services;
 
 public class FileScanner(ILogger<FileScanner> _logger)
 {
+    private const string RootNodeName = ".";
+
     private static readonly HashSet<string> BinaryExtensions =
     [
         ".dll", ".exe", ".pdb", ".so", ".dylib", ".bin", ".zip", ".7z", ".rar"
@@ -60,6 +62,18 @@ public class FileScanner(ILogger<FileScanner> _logger)
                     });
                 }
             });
+
+            var rootFileCount = SafeCountDistinctTopLevelFiles(productionPath, deployPath);
+            if (rootFileCount > 0)
+            {
+                results.Add(new FolderNode
+                {
+                    Name = RootNodeName,
+                    FullPath = deployPath,
+                    IsRoot = true,
+                    EstimatedFileCount = rootFileCount
+                });
+            }
 
             return results.OrderBy(f => f.Name).ToList();
         });
@@ -119,7 +133,7 @@ public class FileScanner(ILogger<FileScanner> _logger)
             // Each top-level directory in parallel
             foreach (var name in allTopNames)
             {
-                if (IsExcluded(name + "/", scope.ExcludePatterns)) continue;
+                if (IsExcluded(name + Path.DirectorySeparatorChar, scope.ExcludePatterns)) continue;
                 var pd = Path.Combine(productionPath, name!);
                 var dd = Path.Combine(deployPath, name!);
                 scanTasks.Add(ScanDirectoryParallelAsync(
@@ -131,6 +145,15 @@ public class FileScanner(ILogger<FileScanner> _logger)
         {
             foreach (var folder in scope.SelectedFolders)
             {
+                if (folder.IsRoot)
+                {
+                    scanTasks.Add(ScanOneLevelAsync(
+                        productionPath, deployPath,
+                        productionPath, deployPath,
+                        scope.ExcludePatterns, bag, ReportThrottled));
+                    continue;
+                }
+
                 var pd = Path.Combine(productionPath, folder.Name);
                 var dd = Path.Combine(deployPath, folder.Name);
                 scanTasks.Add(ScanDirectoryParallelAsync(
@@ -227,7 +250,7 @@ public class FileScanner(ILogger<FileScanner> _logger)
 
         foreach (var subName in allSubNames)
         {
-            if (IsExcluded(subName + "/", excludePatterns)) continue;
+            if (IsExcluded(subName + Path.DirectorySeparatorChar, excludePatterns)) continue;
             var sp = Path.Combine(productionDir, subName!);
             var sd = Path.Combine(deployDir, subName!);
             subTasks.Add(ScanDirectoryParallelAsync(
@@ -367,6 +390,19 @@ public class FileScanner(ILogger<FileScanner> _logger)
     {
         try { return Directory.GetFiles(path, "*", SearchOption.TopDirectoryOnly).Length; }
         catch { return 0; }
+    }
+
+    private static int SafeCountDistinctTopLevelFiles(string productionPath, string deployPath)
+    {
+        var productionFiles = Directory.Exists(productionPath) ? SafeGetFiles(productionPath) : [];
+        var deployFiles = Directory.Exists(deployPath) ? SafeGetFiles(deployPath) : [];
+
+        return productionFiles
+            .Select(Path.GetFileName)
+            .Concat(deployFiles.Select(Path.GetFileName))
+            .Where(name => !string.IsNullOrWhiteSpace(name))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Count();
     }
 
     private static long? GetFileSize(string path)

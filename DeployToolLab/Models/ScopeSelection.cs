@@ -10,11 +10,14 @@ public class FolderNode
 {
     public string Name { get; init; } = string.Empty;
     public string FullPath { get; init; } = string.Empty;
+    public bool IsRoot { get; init; }
     public bool IsSelected { get; set; } = true;
     public bool IsNewInDeploy { get; init; }
     public bool IsOnlyInProduction { get; init; }
     public string? GroupName { get; init; }
     public int EstimatedFileCount { get; init; }
+
+    public string DisplayName => IsRoot ? "(ROOT FILES)" : Name;
 
     public string Badge => (IsNewInDeploy, IsOnlyInProduction) switch
     {
