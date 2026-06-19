@@ -15,7 +15,7 @@ public class BackupService(ILogger<BackupService> logger)
 
         if (scope.Mode == ScopeMode.FullCompare)
         {
-            await CopyDirectoryAsync(productionPath, backupRoot, scope.ExcludePatterns, progress);
+            await CopyDirectoryAsync(productionPath, backupRoot, backupRoot, scope.ExcludePatterns, progress);
         }
         else
         {
@@ -24,7 +24,7 @@ public class BackupService(ILogger<BackupService> logger)
                 var srcFolder = Path.Combine(productionPath, folder.Name);
                 var dstFolder = Path.Combine(backupRoot, folder.Name);
                 if (Directory.Exists(srcFolder))
-                    await CopyDirectoryAsync(srcFolder, dstFolder, scope.ExcludePatterns, progress);
+                    await CopyDirectoryAsync(srcFolder, dstFolder, backupRoot, scope.ExcludePatterns, progress);
             }
         }
 
@@ -36,12 +36,13 @@ public class BackupService(ILogger<BackupService> logger)
         string backupPath, string productionPath,
         IProgress<string>? progress = null)
     {
-        await CopyDirectoryAsync(backupPath, productionPath, [], progress);
+        await CopyDirectoryAsync(backupPath, productionPath, null, [], progress);
         logger.LogInformation("롤백 완료: {BackupPath} -> {ProductionPath}", backupPath, productionPath);
     }
 
     private static async Task CopyDirectoryAsync(
         string source, string destination,
+        string? excludeAbsolutePath,
         List<string> excludePatterns,
         IProgress<string>? progress)
     {
@@ -59,11 +60,16 @@ public class BackupService(ILogger<BackupService> logger)
 
         foreach (var dir in Directory.GetDirectories(source))
         {
+            // 백업 대상 폴더 자체가 소스 하위에 있는 경우 무한 재귀 방지
+            if (excludeAbsolutePath is not null &&
+                dir.StartsWith(excludeAbsolutePath, StringComparison.OrdinalIgnoreCase))
+                continue;
+
             var dirName = Path.GetFileName(dir);
             if (IsExcluded(dirName + "/", excludePatterns)) continue;
 
             var destDir = Path.Combine(destination, dirName);
-            await CopyDirectoryAsync(dir, destDir, excludePatterns, progress);
+            await CopyDirectoryAsync(dir, destDir, excludeAbsolutePath, excludePatterns, progress);
         }
     }
 

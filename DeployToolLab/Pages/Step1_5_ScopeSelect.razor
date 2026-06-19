@@ -74,10 +74,19 @@
     else
     {
         <div class="form-section">
-            <label class="form-label"><i class="bi bi-filter me-1"></i>제외 패턴 <span style="color:var(--c-text-3);font-weight:400;">(한 줄에 하나씩)</span></label>
-            <textarea class="form-control" rows="5"
-                      @bind="_excludePatternsText"
-                      @bind:event="oninput"></textarea>
+            <label class="form-label"><i class="bi bi-filter me-1"></i>제외 패턴</label>
+            <textarea class="form-control" rows="6"
+                      value="@_excludePatternsText"
+                      @oninput="OnExcludePatternsInput"
+                      @onkeydown:stopPropagation="true"
+                      spellcheck="false"
+                      placeholder="한 줄에 하나씩 입력하세요.&#10;폴더 제외: log/&#10;확장자 제외: *.log&#10;부분 경로 제외: Backup/&#10;&#10;Enter로 다음 줄, Shift+Enter도 동일하게 작동합니다."></textarea>
+            <div class="field-hint">
+                <i class="bi bi-info-circle me-1"></i>
+                예시: <code style="font-size:11px;color:var(--c-accent);">log/</code> (폴더),
+                <code style="font-size:11px;color:var(--c-accent);">*.log</code> (확장자),
+                <code style="font-size:11px;color:var(--c-accent);">Backup/</code> (경로 포함)
+            </div>
         </div>
     }
 
@@ -128,10 +137,14 @@
     private List<FileChangeItem> _partialChanges = [];
     private System.Threading.Timer? _progressTimer;
 
-    private string _excludePatternsText
+    private string _excludePatternsText =>
+        string.Join("\n", Session.Scope.ExcludePatterns);
+
+    private void OnExcludePatternsInput(ChangeEventArgs e)
     {
-        get => string.Join("\n", Session.Scope.ExcludePatterns);
-        set => Session.Scope.ExcludePatterns = [.. value.Split('\n', StringSplitOptions.RemoveEmptyEntries)];
+        var raw = e.Value?.ToString() ?? string.Empty;
+        Session.Scope.ExcludePatterns = [.. raw.Split('\n', StringSplitOptions.RemoveEmptyEntries)
+            .Select(s => s.TrimEnd('\r'))];
     }
 
     private async Task StartScanAsync()

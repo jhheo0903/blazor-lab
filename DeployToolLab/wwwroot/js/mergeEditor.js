@@ -1,3 +1,4 @@
+
 window.mergeEditor = {
     // Sync right textarea scroll to left panel scroll and vice versa
     syncScroll: function (leftId, rightId) {

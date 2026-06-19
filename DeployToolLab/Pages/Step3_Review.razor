@@ -72,10 +72,10 @@
         }
     </div>
 
-    <div class="detail-pane" style="flex:1;">
+    <div class="detail-pane" style="flex:1;padding:0;overflow:hidden;display:flex;flex-direction:column;">
         @if (_selectedItem is null)
         {
-            <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;color:var(--c-text-3);">
+            <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;flex:1;color:var(--c-text-3);">
                 <i class="bi bi-arrow-left-circle" style="font-size:32px;margin-bottom:12px;opacity:.4;"></i>
                 <div style="font-size:13.5px;">왼쪽 트리에서 파일을 선택하세요</div>
             </div>
@@ -83,6 +83,13 @@
         else if (_selectedItem.IsBinary)
         {
             <BinaryFilePanel Item="@_selectedItem" OnDecisionChanged="OnDecisionChanged" />
+        }
+        else if (_isLoadingDiff)
+        {
+            <div style="display:flex;align-items:center;justify-content:center;flex:1;color:var(--c-text-3);gap:10px;">
+                <span class="spinner-border spinner-border-sm"></span>
+                <span style="font-size:13px;">파일 로딩 중...</span>
+            </div>
         }
         else
         {
@@ -111,6 +118,7 @@
     private List<FileTreeNodeModel> _treeNodes = [];
     private string _productionText = string.Empty;
     private string _deployText = string.Empty;
+    private bool _isLoadingDiff;
 
     // Pre-computed counts — avoid LINQ on every render
     private int _addedCount;
@@ -146,13 +154,18 @@
         _selectedItem = item;
         _productionText = string.Empty;
         _deployText = string.Empty;
+        _isLoadingDiff = false;
 
         if (item is null || item.IsBinary) return;
+
+        _isLoadingDiff = true;
+        StateHasChanged();
 
         var (_, productionText, deployText) = await DiffEngine.ComputeFileDiffWithTextAsync(
             item.ProductionFullPath, item.DeployFullPath);
         _productionText = productionText;
         _deployText = deployText;
+        _isLoadingDiff = false;
     }
 
     private void SelectAllApply()

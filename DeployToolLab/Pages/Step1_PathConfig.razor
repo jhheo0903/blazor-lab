@@ -21,8 +21,15 @@
         <label class="form-label">
             <i class="bi bi-server me-1"></i>운영 경로
         </label>
-        <input class="form-control" placeholder="예: D:\NETS\O365M"
-               @bind="Session.ProductionPath" />
+        <div style="display:flex;gap:8px;">
+            <input class="form-control" placeholder="예: D:\NETS\O365M"
+                   @bind="Session.ProductionPath" style="flex:1;" />
+            <button class="btn btn-outline-secondary btn-sm"
+                    style="flex-shrink:0;white-space:nowrap;"
+                    @onclick="() => OpenPicker(true)">
+                <i class="bi bi-folder2-open"></i> 폴더 선택
+            </button>
+        </div>
         <div class="field-hint">실제 서비스가 구동 중인 폴더</div>
     </div>
 
@@ -30,8 +37,15 @@
         <label class="form-label">
             <i class="bi bi-box-arrow-in-down me-1"></i>배포 파일 경로
         </label>
-        <input class="form-control" placeholder="예: D:\imprep"
-               @bind="Session.DeployPath" />
+        <div style="display:flex;gap:8px;">
+            <input class="form-control" placeholder="예: D:\imprep"
+                   @bind="Session.DeployPath" style="flex:1;" />
+            <button class="btn btn-outline-secondary btn-sm"
+                    style="flex-shrink:0;white-space:nowrap;"
+                    @onclick="() => OpenPicker(false)">
+                <i class="bi bi-folder2-open"></i> 폴더 선택
+            </button>
+        </div>
         <div class="field-hint">새로 빌드된 파일이 위치한 폴더</div>
     </div>
 
@@ -74,6 +88,37 @@
 @code {
     private bool _isScanning;
     private string? _errorMessage;
+
+    private async Task OpenPicker(bool forProduction)
+    {
+        var path = await Task.Run(() =>
+        {
+            string? result = null;
+            var thread = new System.Threading.Thread(() =>
+            {
+                using var dlg = new System.Windows.Forms.FolderBrowserDialog
+                {
+                    Description = forProduction ? "운영 경로 선택" : "배포 파일 경로 선택",
+                    UseDescriptionForTitle = true,
+                    ShowNewFolderButton = false,
+                    SelectedPath = forProduction ? Session.ProductionPath : Session.DeployPath
+                };
+                if (dlg.ShowDialog() == System.Windows.Forms.DialogResult.OK)
+                    result = dlg.SelectedPath;
+            });
+            thread.SetApartmentState(System.Threading.ApartmentState.STA);
+            thread.Start();
+            thread.Join();
+            return result;
+        });
+
+        if (path is null) return;
+        if (forProduction)
+            Session.ProductionPath = path;
+        else
+            Session.DeployPath = path;
+        StateHasChanged();
+    }
 
     private async Task StartQuickScanAsync()
     {

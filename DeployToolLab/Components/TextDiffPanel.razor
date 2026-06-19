@@ -4,7 +4,7 @@
 @inject DiffEngine DiffEngine
 @inject IJSRuntime JS
 
-<div style="height:100%;display:flex;flex-direction:column;">
+<div style="height:100%;display:flex;flex-direction:column;overflow:hidden;">
 
     @* ── Action bar ─────────────────────────────────────────── *@
     <div class="diff-actionbar">
@@ -15,13 +15,19 @@
         <span class="diff-filepath">@Path.GetDirectoryName(Item.RelativePath)</span>
         <div style="flex:1;"></div>
 
+        @if (_saveError is not null)
+        {
+            <span style="font-size:11px;color:var(--c-red);">
+                <i class="bi bi-exclamation-circle-fill" style="font-size:9px;"></i> @_saveError
+            </span>
+        }
         @if (_isDirty)
         {
             <span style="font-size:11px;color:var(--c-yellow);">
                 <i class="bi bi-circle-fill" style="font-size:7px;"></i> 수정됨
             </span>
         }
-        @if (Item.Decision == DeployDecisionValue.Apply && Item.MergedJsonContent is not null)
+        @if (_savedOk)
         {
             <span class="decision-badge decision-apply">
                 <i class="bi bi-check-circle-fill me-1"></i>저장됨
@@ -31,49 +37,49 @@
         <button class="btn btn-outline-secondary btn-sm" @onclick="ResetToOriginal" disabled="@(!_isDirty)">
             <i class="bi bi-arrow-counterclockwise"></i> 원본 복원
         </button>
-        <button class="btn btn-primary btn-sm" @onclick="SaveMerge" disabled="@(!_isDirty && Item.MergedJsonContent is null)">
+        <button class="btn btn-primary btn-sm" @onclick="SaveMergeAsync" disabled="@(!_isDirty)">
             <i class="bi bi-floppy"></i> 저장
         </button>
     </div>
 
-    @* ── Merge editor ─────────────────────────────────────── *@
-    <div class="merge-editor-layout">
+    @* ── Header row ───────────────────────────────────────── *@
+    <div style="display:grid;grid-template-columns:1fr 3px 1fr;flex-shrink:0;border-bottom:1px solid var(--c-border);">
+        <div class="merge-editor-header">
+            <i class="bi bi-hdd-stack" style="font-size:11px;"></i> 운영 (읽기 전용)
+            <span class="sbs-stat" style="color:var(--c-red);margin-left:auto;">-@_deletedCount</span>
+        </div>
+        <div style="background:var(--c-border);"></div>
+        <div class="merge-editor-header">
+            <i class="bi bi-pencil-square" style="font-size:11px;"></i> 배포 (편집 가능)
+            <span class="sbs-stat" style="color:var(--c-green);margin-left:auto;">+@_insertedCount</span>
+        </div>
+    </div>
 
-        @* 좌: 운영 (읽기전용) *@
-        <div class="merge-editor-side">
-            <div class="merge-editor-header">
-                <i class="bi bi-hdd-stack" style="font-size:11px;"></i> 운영
-                <span class="sbs-stat" style="color:var(--c-red);margin-left:auto;">
-                    -@_deletedCount
-                </span>
-            </div>
-            <div class="merge-left-lines" id="@_leftId">
-                @foreach (var row in _rows)
-                {
-                    <div class="me-line @row.LeftClass">
-                        <span class="me-lineno">@row.LeftLineNo</span>
-                        <span class="me-text">@row.LeftText</span>
-                    </div>
-                }
-            </div>
+    @* ── Merge editor ─────────────────────────────────────── *@
+    <div style="flex:1;display:flex;min-height:0;overflow:hidden;">
+
+        @* 좌: 운영 (읽기전용 라인 목록) *@
+        <div class="merge-left-lines" id="@_leftId" style="flex:1;min-width:0;">
+            @foreach (var row in _rows)
+            {
+                <div class="me-line @row.LeftClass">
+                    <span class="me-lineno">@row.LeftLineNo</span>
+                    <span class="me-text">@row.LeftText</span>
+                </div>
+            }
         </div>
 
         <div class="merge-editor-divider"></div>
 
-        @* 우: 배포 (편집가능) *@
-        <div class="merge-editor-side">
-            <div class="merge-editor-header">
-                <i class="bi bi-pencil-square" style="font-size:11px;"></i> 배포
-                <span class="sbs-stat" style="color:var(--c-green);margin-left:auto;">
-                    +@_insertedCount
-                </span>
-            </div>
-            <textarea id="@_rightId"
-                      class="merge-textarea"
-                      value="@_editText"
-                      @oninput="OnInput"
-                      spellcheck="false"></textarea>
-        </div>
+        @* 우: 배포 (편집가능 textarea) *@
+        <textarea id="@_rightId"
+                  class="merge-textarea"
+                  style="flex:1;min-width:0;"
+                  value="@_editText"
+                  @oninput="OnInput"
+                  @onkeydown:stopPropagation="true"
+                  spellcheck="false"
+                  readonly="@(Item.Status == FileChangeStatus.Deleted)"></textarea>
     </div>
 </div>
 
@@ -85,49 +91,53 @@
 
     private string _editText = string.Empty;
     private bool _isDirty;
+    private bool _savedOk;
+    private string? _saveError;
 
     private List<MergeRow> _rows = [];
     private int _deletedCount;
     private int _insertedCount;
 
-    // Stable IDs so JS scroll-sync survives re-renders
     private string _leftId = string.Empty;
     private string _rightId = string.Empty;
+    private string _lastItemId = string.Empty;
 
     private System.Threading.CancellationTokenSource? _debounceCts;
 
     protected override void OnParametersSet()
     {
-        // New file selected — reset state
         var newId = Item.RelativePath;
-        if (_leftId != "left-" + newId.GetHashCode())
-        {
-            _leftId = "left-" + Math.Abs(newId.GetHashCode());
-            _rightId = "right-" + Math.Abs(newId.GetHashCode());
-            _editText = DeployText;
-            _isDirty = false;
-            RebuildRows(ProductionText, _editText);
-        }
+        if (_lastItemId == newId) return;
+
+        _lastItemId = newId;
+        _leftId = "left-" + Math.Abs(newId.GetHashCode());
+        _rightId = "right-" + Math.Abs(newId.GetHashCode());
+
+        // 저장된 편집 내용이 있으면 복원
+        _editText = Item.MergedJsonContent ?? DeployText;
+        _isDirty = Item.MergedJsonContent is not null && Item.MergedJsonContent != DeployText;
+        _savedOk = Item.Decision == DeployDecisionValue.Apply && Item.MergedJsonContent is not null;
+        _saveError = null;
+
+        RebuildRows(ProductionText, _editText);
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        if (firstRender || _leftId != string.Empty)
+        if (!string.IsNullOrEmpty(_leftId))
         {
-            try
-            {
-                await JS.InvokeVoidAsync("mergeEditor.syncScroll", _leftId, _rightId);
-            }
-            catch { /* JS not ready yet */ }
+            try { await JS.InvokeVoidAsync("mergeEditor.syncScroll", _leftId, _rightId); }
+            catch { }
         }
     }
 
     private async Task OnInput(ChangeEventArgs e)
     {
         _editText = e.Value?.ToString() ?? string.Empty;
-        _isDirty = _editText != DeployText;
+        _isDirty = _editText != (Item.MergedJsonContent ?? DeployText);
+        _savedOk = false;
+        _saveError = null;
 
-        // Debounce diff recompute 300ms
         _debounceCts?.Cancel();
         _debounceCts = new System.Threading.CancellationTokenSource();
         var token = _debounceCts.Token;
@@ -157,21 +167,19 @@
     {
         var rows = new List<MergeRow>();
         int maxLines = Math.Max(diff.OldText.Lines.Count, diff.NewText.Lines.Count);
-        int leftNo = 0, rightNo = 0;
+        int leftNo = 0;
 
         for (int i = 0; i < maxLines; i++)
         {
             var old = i < diff.OldText.Lines.Count ? diff.OldText.Lines[i] : null;
-            var neu = i < diff.NewText.Lines.Count ? diff.NewText.Lines[i] : null;
 
             if (old?.Type != ChangeType.Imaginary) leftNo++;
-            if (neu?.Type != ChangeType.Imaginary) rightNo++;
 
             rows.Add(new MergeRow
             {
-                LeftLineNo  = old?.Type == ChangeType.Imaginary ? "" : leftNo.ToString(),
-                LeftText    = old?.Text ?? "",
-                LeftClass   = GetClass(old?.Type),
+                LeftLineNo = old?.Type == ChangeType.Imaginary ? "" : leftNo.ToString(),
+                LeftText   = old?.Text ?? "",
+                LeftClass  = GetClass(old?.Type),
             });
         }
         return rows;
@@ -190,6 +198,8 @@
     {
         _editText = DeployText;
         _isDirty = false;
+        _savedOk = false;
+        _saveError = null;
         Item.MergedJsonContent = null;
         if (Item.Decision == DeployDecisionValue.Apply)
             Item.Decision = DeployDecisionValue.Pending;
@@ -197,12 +207,28 @@
         OnDecisionChanged.InvokeAsync();
     }
 
-    private void SaveMerge()
+    private async Task SaveMergeAsync()
     {
-        Item.MergedJsonContent = _editText;
-        Item.Decision = DeployDecisionValue.Apply;
-        _isDirty = false;
-        OnDecisionChanged.InvokeAsync();
+        _saveError = null;
+        try
+        {
+            // 배포 파일 경로에 직접 저장 (편집한 내용을 즉시 반영)
+            var targetPath = Item.DeployFullPath;
+            if (targetPath is not null)
+            {
+                await File.WriteAllTextAsync(targetPath, _editText, System.Text.Encoding.UTF8);
+            }
+
+            Item.MergedJsonContent = _editText;
+            Item.Decision = DeployDecisionValue.Apply;
+            _isDirty = false;
+            _savedOk = true;
+            await OnDecisionChanged.InvokeAsync();
+        }
+        catch (Exception ex)
+        {
+            _saveError = $"저장 실패: {ex.Message}";
+        }
     }
 
     private sealed class MergeRow

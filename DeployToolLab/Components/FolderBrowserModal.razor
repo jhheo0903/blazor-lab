@@ -1,0 +1,138 @@
+@using System.IO
+
+<div class="folder-modal-backdrop" @onclick="Cancel">
+    <div class="folder-modal" @onclick:stopPropagation="true">
+        <div class="folder-modal-header">
+            <i class="bi bi-folder2-open me-2"></i>폴더 선택
+            <button class="folder-modal-close" @onclick="Cancel"><i class="bi bi-x-lg"></i></button>
+        </div>
+
+        <div class="folder-modal-breadcrumb">
+            @foreach (var (part, idx) in _breadcrumbs)
+            {
+                @if (idx > 0) { <span class="folder-bc-sep">/</span> }
+                <button class="folder-bc-btn" @onclick="() => NavigateTo(idx)">@part</button>
+            }
+        </div>
+
+        <div class="folder-modal-body">
+            @if (_errorMessage is not null)
+            {
+                <div class="folder-modal-error"><i class="bi bi-exclamation-circle me-1"></i>@_errorMessage</div>
+            }
+
+            @if (_drives.Count > 0 && _currentPath is null)
+            {
+                @foreach (var drive in _drives)
+                {
+                    <button class="folder-item" @onclick="() => OpenPath(drive)">
+                        <i class="bi bi-hdd me-2"></i>@drive
+                    </button>
+                }
+            }
+            else
+            {
+                @foreach (var dir in _subDirs)
+                {
+                    <button class="folder-item" @onclick="() => OpenPath(dir)">
+                        <i class="bi bi-folder-fill me-2" style="color:var(--c-yellow);"></i>@Path.GetFileName(dir)
+                    </button>
+                }
+                @if (_subDirs.Count == 0)
+                {
+                    <div style="color:var(--c-text-3);font-size:12.5px;padding:12px 0;">하위 폴더 없음</div>
+                }
+            }
+        </div>
+
+        <div class="folder-modal-footer">
+            <div class="folder-modal-selected" title="@_currentPath">
+                <i class="bi bi-folder-check me-1" style="color:var(--c-accent);"></i>
+                <span>@(_currentPath ?? "드라이브를 선택하세요")</span>
+            </div>
+            <div style="display:flex;gap:8px;">
+                <button class="btn btn-outline-secondary btn-sm" @onclick="Cancel">취소</button>
+                <button class="btn btn-primary btn-sm" @onclick="Confirm" disabled="@(_currentPath is null)">
+                    선택
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+@code {
+    [Parameter] public EventCallback<string?> OnSelected { get; set; }
+
+    private string? _currentPath;
+    private List<string> _drives = [];
+    private List<string> _subDirs = [];
+    private List<(string part, int idx)> _breadcrumbs = [];
+    private string? _errorMessage;
+
+    protected override void OnInitialized()
+    {
+        _drives = DriveInfo.GetDrives()
+            .Where(d => d.IsReady)
+            .Select(d => d.RootDirectory.FullName)
+            .ToList();
+    }
+
+    private void OpenPath(string path)
+    {
+        _errorMessage = null;
+        try
+        {
+            var dirs = Directory.GetDirectories(path)
+                .OrderBy(d => Path.GetFileName(d), StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            _currentPath = path;
+            _subDirs = dirs;
+            BuildBreadcrumbs(path);
+        }
+        catch (Exception ex)
+        {
+            _errorMessage = $"접근 불가: {ex.Message}";
+        }
+    }
+
+    private void NavigateTo(int crumbIndex)
+    {
+        if (crumbIndex == 0)
+        {
+            _currentPath = null;
+            _subDirs = [];
+            _breadcrumbs = [];
+            return;
+        }
+        var targetPath = string.Join(Path.DirectorySeparatorChar.ToString(),
+            _breadcrumbs.Take(crumbIndex + 1).Select(b => b.part));
+        // Reconstruct full path from breadcrumb parts
+        var full = _breadcrumbPaths.ElementAtOrDefault(crumbIndex);
+        if (full is not null) OpenPath(full);
+    }
+
+    private List<string> _breadcrumbPaths = [];
+
+    private void BuildBreadcrumbs(string path)
+    {
+        _breadcrumbPaths = [];
+        _breadcrumbs = [];
+
+        _breadcrumbs.Add(("(드라이브)", 0));
+        _breadcrumbPaths.Add("");
+
+        var parts = path.TrimEnd(Path.DirectorySeparatorChar)
+                        .Split(Path.DirectorySeparatorChar, StringSplitOptions.RemoveEmptyEntries);
+
+        string built = "";
+        for (int i = 0; i < parts.Length; i++)
+        {
+            built = i == 0 ? parts[i] + Path.DirectorySeparatorChar : Path.Combine(built, parts[i]);
+            _breadcrumbs.Add((parts[i], _breadcrumbs.Count));
+            _breadcrumbPaths.Add(built);
+        }
+    }
+
+    private async Task Confirm() => await OnSelected.InvokeAsync(_currentPath);
+    private async Task Cancel() => await OnSelected.InvokeAsync(null);
+}

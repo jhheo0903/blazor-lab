@@ -31,11 +31,7 @@ public class ScopeSelection
 {
     public ScopeMode Mode { get; set; } = ScopeMode.FullCompare;
     public List<FolderNode> AvailableFolders { get; set; } = [];
-    public List<string> ExcludePatterns { get; set; } =
-    [
-        "log/", "Backup/", "temp/", "_quarantine/", "Elastic/",
-        "*.log", "*.rb", "*.jar", "*.gemspec", "Config-Copy*/"
-    ];
+    public List<string> ExcludePatterns { get; set; } = [];
 
     public IEnumerable<FolderNode> SelectedFolders =>
         AvailableFolders.Where(f => f.IsSelected);
