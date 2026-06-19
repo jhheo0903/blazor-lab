@@ -11,11 +11,13 @@ public class BackupService(ILogger<BackupService> logger)
     {
         var timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
         var backupRoot = Path.Combine(productionPath, "Backup", $"backup_{timestamp}");
+        // Backup 폴더 전체를 복사에서 제외 (무한 재귀 방지)
+        var backupParent = Path.Combine(productionPath, "Backup");
         Directory.CreateDirectory(backupRoot);
 
         if (scope.Mode == ScopeMode.FullCompare)
         {
-            await CopyDirectoryAsync(productionPath, backupRoot, backupRoot, scope.ExcludePatterns, progress);
+            await CopyDirectoryAsync(productionPath, backupRoot, backupParent, scope.ExcludePatterns, progress);
         }
         else
         {
@@ -24,7 +26,7 @@ public class BackupService(ILogger<BackupService> logger)
                 var srcFolder = Path.Combine(productionPath, folder.Name);
                 var dstFolder = Path.Combine(backupRoot, folder.Name);
                 if (Directory.Exists(srcFolder))
-                    await CopyDirectoryAsync(srcFolder, dstFolder, backupRoot, scope.ExcludePatterns, progress);
+                    await CopyDirectoryAsync(srcFolder, dstFolder, backupParent, scope.ExcludePatterns, progress);
             }
         }
 

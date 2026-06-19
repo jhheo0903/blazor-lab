@@ -101,7 +101,9 @@
                     Description = forProduction ? "운영 경로 선택" : "배포 파일 경로 선택",
                     UseDescriptionForTitle = true,
                     ShowNewFolderButton = false,
-                    SelectedPath = forProduction ? Session.ProductionPath : Session.DeployPath
+                    SelectedPath = forProduction
+                        ? Session.ProductionPath
+                        : Session.DeployPath
                 };
                 if (dlg.ShowDialog() == System.Windows.Forms.DialogResult.OK)
                     result = dlg.SelectedPath;
@@ -119,6 +121,7 @@
             Session.DeployPath = path;
         StateHasChanged();
     }
+
 
     private async Task StartQuickScanAsync()
     {

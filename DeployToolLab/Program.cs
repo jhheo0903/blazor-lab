@@ -3,6 +3,10 @@ using DeployTool.Models;
 using DeployTool.Services;
 using Microsoft.AspNetCore.Components.Server;
 
+// WinForms 다이얼로그(FolderBrowserDialog) 사용을 위한 초기화
+System.Windows.Forms.Application.EnableVisualStyles();
+System.Windows.Forms.Application.SetCompatibleTextRenderingDefault(false);
+
 var builder = WebApplication.CreateBuilder(args);
 
 // When running from source in non-Development environments,
