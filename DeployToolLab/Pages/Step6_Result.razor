@@ -3,6 +3,10 @@
 @using DeployTool.Services
 @inject DeploySession Session
 @inject BackupService BackupService
+@inject DeployConfigService ConfigService
+@inject PostDeployRunner PostDeployRunner
+@inject WindowsServiceManager ServiceManager
+@inject IisPoolManager PoolManager
 @inject NavigationManager Nav
 
 <PageTitle>결과 확인 — DeployTool</PageTitle>
@@ -14,6 +18,7 @@
     </h1>
 </div>
 
+@* ── 결과 요약 ── *@
 <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px;max-width:560px;margin-bottom:28px;">
     <div class="result-card success">
         <i class="bi bi-check-circle-fill" style="font-size:22px;color:var(--green);"></i>
@@ -57,6 +62,87 @@
     </div>
 }
 
+@* ── 사후 작업 ── *@
+@if (_config.PostDeployExecutables.Count > 0 || Session.StoppedServices.Count > 0 || Session.StoppedAppPools.Count > 0)
+{
+    <div style="max-width:560px;margin-bottom:24px;padding:16px;border:1px solid var(--c-border);border-radius:var(--r);background:var(--c-elevated);">
+        <div class="section-label" style="margin-bottom:12px;">
+            <i class="bi bi-play-circle me-1" style="color:var(--c-accent);"></i>사후 작업
+        </div>
+
+        @if (_config.PostDeployExecutables.Count > 0)
+        {
+            <div style="font-size:11.5px;font-weight:600;color:var(--c-text-2);margin-bottom:8px;text-transform:uppercase;letter-spacing:.04em;">
+                실행 파일
+            </div>
+            @foreach (var exe in _config.PostDeployExecutables)
+            {
+                <div style="font-size:12.5px;font-family:var(--mono);color:var(--c-text-2);margin-bottom:3px;">
+                    <i class="bi bi-terminal me-1"></i>
+                    @(string.IsNullOrWhiteSpace(exe.DisplayName) ? exe.Path : exe.DisplayName)
+                </div>
+            }
+        }
+
+        @if (Session.StoppedServices.Count > 0 || Session.StoppedAppPools.Count > 0)
+        {
+            <div style="font-size:11.5px;font-weight:600;color:var(--c-text-2);margin:10px 0 8px;text-transform:uppercase;letter-spacing:.04em;">
+                재시작 대상
+            </div>
+            @foreach (var s in Session.StoppedServices)
+            {
+                <div style="font-size:12.5px;color:var(--c-text-2);margin-bottom:3px;">
+                    <i class="bi bi-gear me-1"></i>@s
+                </div>
+            }
+            @foreach (var p in Session.StoppedAppPools)
+            {
+                <div style="font-size:12.5px;color:var(--c-text-2);margin-bottom:3px;">
+                    <i class="bi bi-globe me-1"></i>@p
+                </div>
+            }
+        }
+
+        @if (!_postDeployDone)
+        {
+            <button class="btn btn-primary btn-sm" style="margin-top:12px;"
+                    @onclick="RunPostDeployAsync"
+                    disabled="@_isPostDeploying">
+                @if (_isPostDeploying)
+                {
+                    <span class="spinner-border spinner-border-sm"></span>
+                    <span>실행 중...</span>
+                }
+                else
+                {
+                    <i class="bi bi-play-fill"></i>
+                    <span>사후 작업 실행</span>
+                }
+            </button>
+        }
+
+        @if (_postDeployLogs.Count > 0)
+        {
+            <div style="margin-top:12px;max-height:220px;overflow-y:auto;background:var(--c-bg);border:1px solid var(--c-border);border-radius:4px;padding:8px;">
+                @foreach (var line in _postDeployLogs)
+                {
+                    <div style="font-family:var(--mono);font-size:11.5px;color:@(line.StartsWith("[ERR]") ? "var(--c-red)" : line.StartsWith("▶") ? "var(--c-accent)" : "var(--c-text-1)");white-space:pre-wrap;margin-bottom:1px;">
+                        @line
+                    </div>
+                }
+            </div>
+        }
+
+        @if (_postDeployDone)
+        {
+            <div class="alert alert-success" style="margin-top:12px;padding:8px 12px;font-size:12.5px;">
+                <i class="bi bi-check-circle-fill me-1"></i>사후 작업이 완료되었습니다.
+            </div>
+        }
+    </div>
+}
+
+@* ── 하단 버튼 ── *@
 <div style="display:flex;gap:10px;flex-wrap:wrap;max-width:560px;">
     @if (Session.BackupPath is not null)
     {
@@ -93,18 +179,72 @@
     private string? _statusMessage;
     private bool _statusIsError;
 
-    protected override void OnInitialized()
+    private DeployConfig _config = new();
+    private bool _isPostDeploying;
+    private bool _postDeployDone;
+    private List<string> _postDeployLogs = [];
+
+    protected override async Task OnInitializedAsync()
     {
         _errorLogs = Session.DeployLog.Where(l => l.IsError).ToList();
         _errorCount = _errorLogs.Count;
         _successCount = Session.ApplyItems.Count() - _errorCount;
+        _config = await ConfigService.LoadAsync();
+    }
+
+    private async Task RunPostDeployAsync()
+    {
+        _isPostDeploying = true;
+        _postDeployLogs.Clear();
+        StateHasChanged();
+
+        // 1. 실행 파일 실행
+        foreach (var exe in _config.PostDeployExecutables)
+        {
+            var progress = new Progress<string>(line =>
+            {
+                _postDeployLogs.Add(line);
+                InvokeAsync(StateHasChanged);
+            });
+            await PostDeployRunner.RunAsync(exe, progress);
+        }
+
+        // 2. 중지했던 서비스 / IIS 풀 재시작
+        if (Session.StoppedServices.Count > 0 || Session.StoppedAppPools.Count > 0)
+        {
+            _postDeployLogs.Add("─── 서비스 / 풀 재시작 ───");
+            StateHasChanged();
+
+            foreach (var svc in Session.StoppedServices)
+            {
+                var (ok, msg) = await ServiceManager.StartAsync(svc);
+                _postDeployLogs.Add($"{(ok ? "✔" : "✖")} {msg}");
+                await InvokeAsync(StateHasChanged);
+            }
+            foreach (var pool in Session.StoppedAppPools)
+            {
+                var (ok, msg) = await PoolManager.StartAsync(pool);
+                _postDeployLogs.Add($"{(ok ? "✔" : "✖")} {msg}");
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+
+        _isPostDeploying = false;
+        _postDeployDone = true;
     }
 
     private async Task RollbackAsync()
     {
         _isRollingBack = true;
+        _statusMessage = null;
         try
         {
+            var preRollbackScope = new ScopeSelection
+            {
+                Mode = ScopeMode.FullCompare,
+                ExcludePatterns = ["Backup/", "_quarantine/"]
+            };
+            await BackupService.CreateBackupAsync(Session.ProductionPath, preRollbackScope);
             await BackupService.RestoreBackupAsync(Session.BackupPath!, Session.ProductionPath);
             _statusMessage = "롤백이 완료되었습니다.";
             _statusIsError = false;
@@ -142,6 +282,10 @@
         Session.DeployLog.Clear();
         Session.BackupPath = null;
         Session.IsDeployDone = false;
+        Session.SelectedServices.Clear();
+        Session.SelectedAppPools.Clear();
+        Session.StoppedServices.Clear();
+        Session.StoppedAppPools.Clear();
         Nav.NavigateTo("/deploy");
     }
 }

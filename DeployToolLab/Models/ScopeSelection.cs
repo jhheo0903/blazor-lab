@@ -31,7 +31,7 @@ public class ScopeSelection
 {
     public ScopeMode Mode { get; set; } = ScopeMode.FullCompare;
     public List<FolderNode> AvailableFolders { get; set; } = [];
-    public List<string> ExcludePatterns { get; set; } = [];
+    public List<string> ExcludePatterns { get; set; } = ["Backup/", "_quarantine/"];
 
     public IEnumerable<FolderNode> SelectedFolders =>
         AvailableFolders.Where(f => f.IsSelected);

@@ -23,6 +23,16 @@ window.mergeEditor = {
         });
     },
 
+    // Sync highlight overlay scrollTop to follow the textarea's scroll
+    overlaySync: function (textareaId, highlightId) {
+        const ta = document.getElementById(textareaId);
+        const hl = document.getElementById(highlightId);
+        if (!ta || !hl) return;
+        ta.addEventListener('scroll', () => {
+            hl.scrollTop = ta.scrollTop;
+        });
+    },
+
     // Focus the textarea and place cursor at end
     focus: function (id) {
         const el = document.getElementById(id);

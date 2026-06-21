@@ -4,6 +4,9 @@
 @inject DeploySession Session
 @inject PreflightChecker PreflightChecker
 @inject DeployExecutor DeployExecutor
+@inject DeployConfigService ConfigService
+@inject WindowsServiceManager ServiceManager
+@inject IisPoolManager PoolManager
 @inject NavigationManager Nav
 
 <PageTitle>배포 실행 — DeployTool</PageTitle>
@@ -16,7 +19,8 @@
     <p class="page-subtitle">Pre-flight 검사 후 실제 파일 배포를 실행합니다.</p>
 </div>
 
-<div style="max-width:600px;display:flex;flex-direction:column;gap:20px;">
+@* 뷰포트를 꽉 채우는 flex 컨테이너 (content 패딩 56px + 페이지 헤더 ~88px 제외) *@
+<div style="display:flex;flex-direction:column;height:calc(100vh - 200px);max-width:600px;overflow:hidden;gap:20px;">
 
     @if (!_preflightDone)
     {
@@ -40,69 +44,133 @@
     }
     else
     {
-        <div>
-            <div class="section-label">Pre-flight 결과</div>
-            <div class="check-list">
-                @foreach (var check in _preflightResults)
-                {
-                    <div class="check-item">
-                        <div class="check-icon @(check.IsPassed ? "pass" : check.IsWarning ? "warn" : "fail")">
-                            @if (check.IsPassed)      { <i class="bi bi-check-lg"></i> }
-                            else if (check.IsWarning) { <i class="bi bi-exclamation"></i> }
-                            else                      { <i class="bi bi-x-lg"></i> }
-                        </div>
-                        <div>
-                            <div class="check-name">@check.CheckName</div>
-                            <div class="check-msg">@check.Message</div>
-                        </div>
-                    </div>
-                }
-            </div>
-        </div>
+        @* ── 상단 고정 영역: pre-flight + 서비스/풀 + 배포 버튼 ── *@
+        <div style="flex-shrink:0;display:flex;flex-direction:column;gap:16px;">
 
-        @if (!Session.IsDeployDone)
-        {
-            @if (!CanDeploy)
+            @* Pre-flight 결과 *@
+            <div>
+                <div class="section-label">Pre-flight 결과</div>
+                <div class="check-list">
+                    @foreach (var check in _preflightResults)
+                    {
+                        <div class="check-item">
+                            <div class="check-icon @(check.IsPassed ? "pass" : check.IsWarning ? "warn" : "fail")">
+                                @if (check.IsPassed)      { <i class="bi bi-check-lg"></i> }
+                                else if (check.IsWarning) { <i class="bi bi-exclamation"></i> }
+                                else                      { <i class="bi bi-x-lg"></i> }
+                            </div>
+                            <div>
+                                <div class="check-name">@check.CheckName</div>
+                                <div class="check-msg">@check.Message</div>
+                            </div>
+                        </div>
+                    }
+                </div>
+            </div>
+
+            @* 서비스 / IIS 풀 중지 선택 *@
+            @if (_config.WindowsServices.Count > 0 || _config.IisAppPools.Count > 0)
             {
-                <div class="alert alert-danger">
-                    <i class="bi bi-exclamation-triangle me-2"></i>
-                    필수 검사 항목 실패. 해결 후 재시도하거나 경고 항목은 확인 후 진행할 수 있습니다.
+                <div>
+                    <div class="section-label">
+                        <i class="bi bi-power me-1" style="color:var(--c-yellow);"></i>서비스 / IIS 풀 중지 (배포 전)
+                    </div>
+
+                    @if (_config.WindowsServices.Count > 0)
+                    {
+                        <div style="font-size:11.5px;font-weight:600;color:var(--c-text-2);margin-bottom:6px;text-transform:uppercase;letter-spacing:.04em;">Windows 서비스</div>
+                        @foreach (var svc in _config.WindowsServices)
+                        {
+                            <label style="display:flex;align-items:center;gap:8px;margin-bottom:5px;font-size:13px;cursor:pointer;">
+                                <input type="checkbox" class="form-check-input"
+                                       checked="@Session.SelectedServices.Contains(svc)"
+                                       @onchange="e => ToggleService(svc, (bool)(e.Value ?? false))" />
+                                <i class="bi bi-gear" style="font-size:12px;color:var(--c-text-3);"></i>@svc
+                            </label>
+                        }
+                    }
+
+                    @if (_config.IisAppPools.Count > 0)
+                    {
+                        <div style="font-size:11.5px;font-weight:600;color:var(--c-text-2);margin:10px 0 6px;text-transform:uppercase;letter-spacing:.04em;">IIS 앱 풀</div>
+                        @foreach (var pool in _config.IisAppPools)
+                        {
+                            <label style="display:flex;align-items:center;gap:8px;margin-bottom:5px;font-size:13px;cursor:pointer;">
+                                <input type="checkbox" class="form-check-input"
+                                       checked="@Session.SelectedAppPools.Contains(pool)"
+                                       @onchange="e => TogglePool(pool, (bool)(e.Value ?? false))" />
+                                <i class="bi bi-globe" style="font-size:12px;color:var(--c-text-3);"></i>@pool
+                            </label>
+                        }
+                    }
+
+                    @if (_stopResults.Count > 0)
+                    {
+                        <div style="margin-top:10px;padding:10px 12px;background:var(--c-elevated);border-radius:var(--r);border:1px solid var(--c-border);">
+                            @foreach (var r in _stopResults)
+                            {
+                                <div style="font-size:12px;font-family:var(--mono);color:@(r.Ok ? "var(--c-green)" : "var(--c-red)");margin-bottom:2px;">
+                                    <i class="bi @(r.Ok ? "bi-check-circle" : "bi-x-circle") me-1"></i>@r.Msg
+                                </div>
+                            }
+                        </div>
+                    }
                 </div>
             }
-            <button class="btn btn-danger"
-                    style="font-size:14px!important;padding:12px 20px!important;align-self:flex-start;"
-                    @onclick="StartDeployAsync"
-                    disabled="@(Session.IsDeploying || !CanDeploy)">
-                @if (Session.IsDeploying)
-                {
-                    <span class="spinner-border spinner-border-sm"></span>
-                    <span>배포 진행 중...</span>
-                }
-                else
-                {
-                    <i class="bi bi-rocket-takeoff-fill"></i>
-                    <span>배포 시작 (@Session.ApplyItems.Count() 개 파일)</span>
-                }
-            </button>
-        }
 
-        <div>
-            <div class="section-label" style="display:flex;align-items:center;gap:8px;">
+            @* 배포 버튼 *@
+            @if (!Session.IsDeployDone)
+            {
+                @if (!CanDeploy)
+                {
+                    <div class="alert alert-danger">
+                        <i class="bi bi-exclamation-triangle me-2"></i>
+                        필수 검사 항목 실패. 해결 후 재시도하거나 경고 항목은 확인 후 진행할 수 있습니다.
+                    </div>
+                }
+                <button class="btn btn-danger"
+                        style="font-size:14px!important;padding:12px 20px!important;align-self:flex-start;"
+                        @onclick="StartDeployAsync"
+                        disabled="@(Session.IsDeploying || _isStopping || !CanDeploy)">
+                    @if (_isStopping)
+                    {
+                        <span class="spinner-border spinner-border-sm"></span>
+                        <span>서비스 중지 중...</span>
+                    }
+                    else if (Session.IsDeploying)
+                    {
+                        <span class="spinner-border spinner-border-sm"></span>
+                        <span>배포 진행 중...</span>
+                    }
+                    else
+                    {
+                        <i class="bi bi-rocket-takeoff-fill"></i>
+                        <span>배포 시작 (@Session.ApplyItems.Count() 개 파일)</span>
+                    }
+                </button>
+            }
+
+            @if (Session.IsDeployDone)
+            {
+                <button class="btn btn-success" style="font-size:14px!important;padding:12px 20px!important;align-self:flex-start;" @onclick="GoToResult">
+                    <i class="bi bi-clipboard-check"></i>Step 6: 결과 확인
+                </button>
+            }
+        </div>
+
+        @* ── 배포 로그 (남은 공간 전체를 차지하며 내부만 스크롤) ── *@
+        <div style="flex:1;min-height:0;display:flex;flex-direction:column;">
+            <div class="section-label" style="display:flex;align-items:center;gap:8px;flex-shrink:0;">
                 <i class="bi bi-terminal" style="color:var(--c-green);"></i>배포 로그
                 @if (Session.IsDeploying)
                 {
                     <span class="spinner-border spinner-border-sm" style="width:10px;height:10px;border-width:1.5px;"></span>
                 }
             </div>
-            <DeployLog Entries="@Session.DeployLog" />
+            <div style="flex:1;min-height:0;">
+                <DeployLog Entries="@Session.DeployLog" />
+            </div>
         </div>
-
-        @if (Session.IsDeployDone)
-        {
-            <button class="btn btn-success" style="font-size:14px!important;padding:12px 20px!important;align-self:flex-start;" @onclick="GoToResult">
-                <i class="bi bi-clipboard-check"></i>Step 6: 결과 확인
-            </button>
-        }
     }
 
 </div>
@@ -110,10 +178,25 @@
 @code {
     private bool _isChecking;
     private bool _preflightDone;
+    private bool _isStopping;
     private List<PreflightCheckResult> _preflightResults = [];
+    private DeployConfig _config = new();
+    private List<(bool Ok, string Msg)> _stopResults = [];
 
     private bool CanDeploy =>
         _preflightResults.All(r => r.IsPassed || r.IsWarning);
+
+    protected override async Task OnInitializedAsync()
+    {
+        _config = await ConfigService.LoadAsync();
+
+        if (Session.SelectedServices.Count == 0)
+            foreach (var s in _config.WindowsServices)
+                Session.SelectedServices.Add(s);
+        if (Session.SelectedAppPools.Count == 0)
+            foreach (var p in _config.IisAppPools)
+                Session.SelectedAppPools.Add(p);
+    }
 
     private async Task RunPreflightAsync()
     {
@@ -134,7 +217,40 @@
 
     private async Task StartDeployAsync()
     {
+        _isStopping = true;
+        _stopResults.Clear();
+        Session.StoppedServices.Clear();
+        Session.StoppedAppPools.Clear();
+
+        foreach (var svc in Session.SelectedServices)
+        {
+            var (ok, msg) = await ServiceManager.StopAsync(svc);
+            _stopResults.Add((ok, msg));
+            if (ok) Session.StoppedServices.Add(svc);
+            StateHasChanged();
+        }
+        foreach (var pool in Session.SelectedAppPools)
+        {
+            var (ok, msg) = await PoolManager.StopAsync(pool);
+            _stopResults.Add((ok, msg));
+            if (ok) Session.StoppedAppPools.Add(pool);
+            StateHasChanged();
+        }
+        _isStopping = false;
+
         await DeployExecutor.ExecuteDeployAsync(Session);
+    }
+
+    private void ToggleService(string name, bool selected)
+    {
+        if (selected) Session.SelectedServices.Add(name);
+        else Session.SelectedServices.Remove(name);
+    }
+
+    private void TogglePool(string name, bool selected)
+    {
+        if (selected) Session.SelectedAppPools.Add(name);
+        else Session.SelectedAppPools.Remove(name);
     }
 
     private void GoToResult() => Nav.NavigateTo("/deploy/result");

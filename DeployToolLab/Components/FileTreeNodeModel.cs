@@ -12,6 +12,20 @@ public class FileTreeNodeModel
         Item?.Status is not (null or FileChangeStatus.Identical) ||
         Children.Any(c => c.HasChanges);
 
+    public bool HasEditableFiles =>
+        (Item is not null && IsEditableExtension(Item.RelativePath)) ||
+        Children.Any(c => c.HasEditableFiles);
+
+    private static bool IsEditableExtension(string path) =>
+        Path.GetExtension(path).ToLowerInvariant() switch
+        {
+            ".json" or ".config" or ".xml" or ".ini" or ".yaml" or ".yml"
+                or ".txt" or ".cs" or ".js" or ".ts" or ".html" or ".cshtml"
+                or ".razor" or ".sql" or ".css" or ".md" or ".bat" or ".ps1"
+                or ".sh" or ".properties" or ".env" => true,
+            _ => false
+        };
+
     public static List<FileTreeNodeModel> BuildTree(IEnumerable<FileChangeItem> items)
     {
         // Single-pass O(N) build using persistent child dictionaries

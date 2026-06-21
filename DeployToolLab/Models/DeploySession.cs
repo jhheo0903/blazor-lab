@@ -32,6 +32,12 @@ public class DeploySession
 
     public string? SessionLockId { get; set; }
 
+    // 서비스 / IIS 풀 관리
+    public HashSet<string> SelectedServices { get; set; } = [];
+    public HashSet<string> SelectedAppPools { get; set; } = [];
+    public List<string> StoppedServices { get; set; } = [];
+    public List<string> StoppedAppPools { get; set; } = [];
+
     public IEnumerable<FileChangeItem> ChangedItems =>
         Changes.Where(c => c.Status != FileChangeStatus.Identical);
 

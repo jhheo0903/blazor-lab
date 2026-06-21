@@ -1,0 +1,22 @@
+{
+  "windowsServices": [
+    "MyWindowsService"
+  ],
+  "iisAppPools": [
+    "DefaultAppPool"
+  ],
+  "postDeployExecutables": [
+    {
+      "displayName": "DB 마이그레이션",
+      "path": "D:\\tools\\migrate.bat",
+      "arguments": "",
+      "workingDirectory": "D:\\tools"
+    },
+    {
+      "displayName": "캐시 초기화",
+      "path": "D:\\tools\\clear-cache.exe",
+      "arguments": "--all",
+      "workingDirectory": ""
+    }
+  ]
+}

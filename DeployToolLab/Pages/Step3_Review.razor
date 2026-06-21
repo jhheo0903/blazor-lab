@@ -47,7 +47,13 @@
         <span style="font-size:12.5px;color:var(--c-text-2);">변경만 보기</span>
     </label>
 
-    <div style="display:flex;gap:6px;margin-left:8px;">
+    <button class="btn @(_showEditableOnly ? "btn-primary" : "btn-outline-secondary") btn-sm"
+            @onclick="() => _showEditableOnly = !_showEditableOnly"
+            title=".json .config .xml .cs .js 등 편집 가능한 설정 파일만 표시">
+        <i class="bi bi-gear"></i> 설정 파일만
+    </button>
+
+    <div style="display:flex;gap:6px;margin-left:4px;">
         <button class="btn btn-outline-secondary btn-sm" @onclick="SelectAllApply">
             <i class="bi bi-check2-all"></i> 전체 적용
         </button>
@@ -61,12 +67,13 @@
     <div class="tree-pane" style="width:280px;min-width:280px;">
         @foreach (var node in _treeNodes)
         {
-            <FileTreeNode
+            <FileTreeNode @key="node"
                 Item="@node.Item"
                 FolderName="@node.FolderName"
                 Children="@node.Children"
                 Depth="0"
                 ShowChangesOnly="@_showChangesOnly"
+                ShowEditableOnly="@_showEditableOnly"
                 SelectedItem="@_selectedItem"
                 OnSelect="@OnItemSelected" />
         }
@@ -114,6 +121,7 @@
 
 @code {
     private bool _showChangesOnly = true;
+    private bool _showEditableOnly;
     private FileChangeItem? _selectedItem;
     private List<FileTreeNodeModel> _treeNodes = [];
     private string _productionText = string.Empty;

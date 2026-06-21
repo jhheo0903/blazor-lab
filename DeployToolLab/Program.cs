@@ -46,6 +46,10 @@ builder.Services.AddScoped<BackupService>();
 builder.Services.AddScoped<PreflightChecker>();
 builder.Services.AddScoped<DeployExecutor>();
 builder.Services.AddScoped<DbSchemaService>();
+builder.Services.AddSingleton<DeployConfigService>();
+builder.Services.AddScoped<WindowsServiceManager>();
+builder.Services.AddScoped<IisPoolManager>();
+builder.Services.AddScoped<PostDeployRunner>();
 
 var app = builder.Build();
 
@@ -66,4 +70,4 @@ app.MapBlazorHub(options =>
 app.MapHub<DeployLogHub>("/deployhub");
 app.MapFallbackToPage("/_Host");
 
-app.Run();
+await app.RunAsync();

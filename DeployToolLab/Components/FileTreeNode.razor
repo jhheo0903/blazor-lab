@@ -36,12 +36,13 @@
         <div class="tree-children">
             @foreach (var child in _visibleChildren)
             {
-                <FileTreeNode
+                <FileTreeNode @key="child"
                     Item="@child.Item"
                     FolderName="@child.FolderName"
                     Children="@child.Children"
                     Depth="@(Depth + 1)"
                     ShowChangesOnly="@ShowChangesOnly"
+                    ShowEditableOnly="@ShowEditableOnly"
                     SelectedItem="@SelectedItem"
                     OnSelect="@OnSelect" />
             }
@@ -54,12 +55,15 @@
     [Parameter] public string? FolderName { get; set; }
     [Parameter] public List<FileTreeNodeModel> Children { get; set; } = [];
     [Parameter] public bool ShowChangesOnly { get; set; }
+    [Parameter] public bool ShowEditableOnly { get; set; }
     [Parameter] public EventCallback<FileChangeItem?> OnSelect { get; set; }
     [Parameter] public FileChangeItem? SelectedItem { get; set; }
     [Parameter] public int Depth { get; set; }
 
     // Pre-computed on parameter set — never recalculated on re-render
     private bool _isExpanded;
+    private bool _userToggled; // 사용자가 명시적으로 토글했는지 여부
+    private string _nodeKey = string.Empty; // 노드 식별자 — 바뀌면 상태 리셋
     private bool _hasChildren;
     private string _displayName = string.Empty;
     private string _icon = string.Empty;
@@ -76,12 +80,24 @@
         _hasChildren = Children.Count > 0;
         _displayName = FolderName ?? Path.GetFileName(Item?.RelativePath) ?? string.Empty;
 
-        // Root-level folders open by default; deeper levels closed
+        // 노드가 바뀌면 (다른 파일/폴더로 컴포넌트 재사용 시) 토글 상태 리셋
+        var key = FolderName ?? Item?.RelativePath ?? string.Empty;
+        if (key != _nodeKey)
+        {
+            _nodeKey = key;
+            _userToggled = false;
+        }
+
         if (!_hasChildren)
+        {
             _isExpanded = false;
-        else if (Depth == 0)
-            _isExpanded = true;
-        // else: keep current state (user toggled)
+        }
+        else if (!_userToggled)
+        {
+            // 사용자가 직접 토글하지 않은 경우: depth 0만 기본 펼침
+            _isExpanded = Depth == 0;
+        }
+        // else: 사용자가 명시적으로 토글한 상태 유지
 
         _icon = GetFileIcon();
         _statusBadgeClass = GetStatusBadgeClass();
@@ -99,13 +115,19 @@
 
     private void RefreshVisibleChildren()
     {
-        _visibleChildren = ShowChangesOnly
-            ? Children.Where(c => c.HasChanges).ToList()
-            : Children;
+        var filtered = ShowChangesOnly
+            ? Children.Where(c => c.HasChanges)
+            : Children.AsEnumerable();
+
+        if (ShowEditableOnly)
+            filtered = filtered.Where(c => c.HasEditableFiles);
+
+        _visibleChildren = filtered.ToList();
     }
 
     private void ToggleExpand()
     {
+        _userToggled = true;
         _isExpanded = !_isExpanded;
     }
 

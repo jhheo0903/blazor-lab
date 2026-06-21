@@ -1,8 +1,6 @@
 @using DeployTool.Models
-@using DeployTool.Services
-@using DiffPlex.DiffBuilder.Model
-@inject DiffEngine DiffEngine
 @inject IJSRuntime JS
+@implements IAsyncDisposable
 
 <div style="height:100%;display:flex;flex-direction:column;overflow:hidden;">
 
@@ -34,7 +32,7 @@
             </span>
         }
 
-        <button class="btn btn-outline-secondary btn-sm" @onclick="ResetToOriginal" disabled="@(!_isDirty)">
+        <button class="btn btn-outline-secondary btn-sm" @onclick="ResetToOriginalAsync" disabled="@(!_isDirty)">
             <i class="bi bi-arrow-counterclockwise"></i> 원본 복원
         </button>
         <button class="btn btn-primary btn-sm" @onclick="SaveMergeAsync" disabled="@(!_isDirty)">
@@ -42,45 +40,17 @@
         </button>
     </div>
 
-    @* ── Header row ───────────────────────────────────────── *@
-    <div style="display:grid;grid-template-columns:1fr 3px 1fr;flex-shrink:0;border-bottom:1px solid var(--c-border);">
-        <div class="merge-editor-header">
-            <i class="bi bi-hdd-stack" style="font-size:11px;"></i> 운영 (읽기 전용)
-            <span class="sbs-stat" style="color:var(--c-red);margin-left:auto;">-@_deletedCount</span>
-        </div>
-        <div style="background:var(--c-border);"></div>
-        <div class="merge-editor-header">
-            <i class="bi bi-pencil-square" style="font-size:11px;"></i> 배포 (편집 가능)
-            <span class="sbs-stat" style="color:var(--c-green);margin-left:auto;">+@_insertedCount</span>
-        </div>
+    @* ── Sub-header (label row) ───────────────────────────── *@
+    <div style="display:flex;justify-content:space-between;padding:5px 16px;font-size:11px;font-weight:600;
+                color:var(--c-text-2);background:var(--c-elevated);border-bottom:1px solid var(--c-border);
+                text-transform:uppercase;letter-spacing:.04em;flex-shrink:0;">
+        <span><i class="bi bi-hdd-stack me-1"></i>운영 (읽기 전용)</span>
+        <span><i class="bi bi-pencil-square me-1"></i>배포 @(Item.Status == FileChangeStatus.Deleted ? "(삭제 예정)" : "(편집 가능)")</span>
     </div>
 
-    @* ── Merge editor ─────────────────────────────────────── *@
-    <div style="flex:1;display:flex;min-height:0;overflow:hidden;">
+    @* ── Monaco Diff Editor ────────────────────────────────── *@
+    <div id="@_editorId" style="flex:1;min-height:0;"></div>
 
-        @* 좌: 운영 (읽기전용 라인 목록) *@
-        <div class="merge-left-lines" id="@_leftId" style="flex:1;min-width:0;">
-            @foreach (var row in _rows)
-            {
-                <div class="me-line @row.LeftClass">
-                    <span class="me-lineno">@row.LeftLineNo</span>
-                    <span class="me-text">@row.LeftText</span>
-                </div>
-            }
-        </div>
-
-        <div class="merge-editor-divider"></div>
-
-        @* 우: 배포 (편집가능 textarea) *@
-        <textarea id="@_rightId"
-                  class="merge-textarea"
-                  style="flex:1;min-width:0;"
-                  value="@_editText"
-                  @oninput="OnInput"
-                  @onkeydown:stopPropagation="true"
-                  spellcheck="false"
-                  readonly="@(Item.Status == FileChangeStatus.Deleted)"></textarea>
-    </div>
 </div>
 
 @code {
@@ -89,20 +59,16 @@
     [Parameter] public string DeployText { get; set; } = string.Empty;
     [Parameter] public EventCallback OnDecisionChanged { get; set; }
 
+    private readonly string _editorId = "monaco-" + Guid.NewGuid().ToString("N")[..8];
+    private DotNetObjectReference<TextDiffPanel>? _dotNetRef;
+
     private string _editText = string.Empty;
     private bool _isDirty;
     private bool _savedOk;
     private string? _saveError;
 
-    private List<MergeRow> _rows = [];
-    private int _deletedCount;
-    private int _insertedCount;
-
-    private string _leftId = string.Empty;
-    private string _rightId = string.Empty;
     private string _lastItemId = string.Empty;
-
-    private System.Threading.CancellationTokenSource? _debounceCts;
+    private bool _pendingModelUpdate;
 
     protected override void OnParametersSet()
     {
@@ -110,101 +76,57 @@
         if (_lastItemId == newId) return;
 
         _lastItemId = newId;
-        _leftId = "left-" + Math.Abs(newId.GetHashCode());
-        _rightId = "right-" + Math.Abs(newId.GetHashCode());
-
-        // 저장된 편집 내용이 있으면 복원
-        _editText = Item.MergedJsonContent ?? DeployText;
-        _isDirty = Item.MergedJsonContent is not null && Item.MergedJsonContent != DeployText;
-        _savedOk = Item.Decision == DeployDecisionValue.Apply && Item.MergedJsonContent is not null;
-        _saveError = null;
-
-        RebuildRows(ProductionText, _editText);
+        _editText   = Item.MergedJsonContent ?? DeployText;
+        _isDirty    = Item.MergedJsonContent is not null && Item.MergedJsonContent != DeployText;
+        _savedOk    = Item.Decision == DeployDecisionValue.Apply && Item.MergedJsonContent is not null;
+        _saveError  = null;
+        _pendingModelUpdate = true;
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        if (!string.IsNullOrEmpty(_leftId))
+        if (firstRender)
         {
-            try { await JS.InvokeVoidAsync("mergeEditor.syncScroll", _leftId, _rightId); }
-            catch { }
+            _dotNetRef = DotNetObjectReference.Create(this);
+            await JS.InvokeVoidAsync("monacoEditor.createDiff",
+                _editorId,
+                ProductionText,
+                _editText,
+                DetectLanguage(Item.RelativePath),
+                Item.Status == FileChangeStatus.Deleted,
+                _dotNetRef);
+            return;
+        }
+
+        if (_pendingModelUpdate)
+        {
+            _pendingModelUpdate = false;
+            await JS.InvokeVoidAsync("monacoEditor.updateModel",
+                _editorId, ProductionText, _editText);
         }
     }
 
-    private async Task OnInput(ChangeEventArgs e)
+    [JSInvokable]
+    public void OnMonacoChange(string value)
     {
-        _editText = e.Value?.ToString() ?? string.Empty;
-        _isDirty = _editText != (Item.MergedJsonContent ?? DeployText);
-        _savedOk = false;
+        _editText  = value;
+        _isDirty   = value != (Item.MergedJsonContent ?? DeployText);
+        _savedOk   = false;
         _saveError = null;
-
-        _debounceCts?.Cancel();
-        _debounceCts = new System.Threading.CancellationTokenSource();
-        var token = _debounceCts.Token;
-        try
-        {
-            await Task.Delay(300, token);
-            if (!token.IsCancellationRequested)
-            {
-                RebuildRows(ProductionText, _editText);
-                StateHasChanged();
-            }
-        }
-        catch (TaskCanceledException) { }
+        StateHasChanged();
     }
 
-    private void RebuildRows(string leftText, string rightText)
+    private async Task ResetToOriginalAsync()
     {
-        var diff = DiffEngine.ComputeSideBySideDiff(leftText, rightText);
-        _rows = BuildRows(diff);
-        _deletedCount = diff.OldText.Lines.Count(l =>
-            l.Type == ChangeType.Deleted || l.Type == ChangeType.Modified);
-        _insertedCount = diff.NewText.Lines.Count(l =>
-            l.Type == ChangeType.Inserted || l.Type == ChangeType.Modified);
-    }
-
-    private static List<MergeRow> BuildRows(SideBySideDiffModel diff)
-    {
-        var rows = new List<MergeRow>();
-        int maxLines = Math.Max(diff.OldText.Lines.Count, diff.NewText.Lines.Count);
-        int leftNo = 0;
-
-        for (int i = 0; i < maxLines; i++)
-        {
-            var old = i < diff.OldText.Lines.Count ? diff.OldText.Lines[i] : null;
-
-            if (old?.Type != ChangeType.Imaginary) leftNo++;
-
-            rows.Add(new MergeRow
-            {
-                LeftLineNo = old?.Type == ChangeType.Imaginary ? "" : leftNo.ToString(),
-                LeftText   = old?.Text ?? "",
-                LeftClass  = GetClass(old?.Type),
-            });
-        }
-        return rows;
-    }
-
-    private static string GetClass(ChangeType? t) => t switch
-    {
-        ChangeType.Deleted   => "me-deleted",
-        ChangeType.Modified  => "me-modified",
-        ChangeType.Inserted  => "me-inserted",
-        ChangeType.Imaginary => "me-imaginary",
-        _                    => ""
-    };
-
-    private void ResetToOriginal()
-    {
-        _editText = DeployText;
-        _isDirty = false;
-        _savedOk = false;
+        _editText  = DeployText;
+        _isDirty   = false;
+        _savedOk   = false;
         _saveError = null;
         Item.MergedJsonContent = null;
         if (Item.Decision == DeployDecisionValue.Apply)
             Item.Decision = DeployDecisionValue.Pending;
-        RebuildRows(ProductionText, _editText);
-        OnDecisionChanged.InvokeAsync();
+        await JS.InvokeVoidAsync("monacoEditor.setValue", _editorId, DeployText);
+        await OnDecisionChanged.InvokeAsync();
     }
 
     private async Task SaveMergeAsync()
@@ -212,12 +134,9 @@
         _saveError = null;
         try
         {
-            // 배포 파일 경로에 직접 저장 (편집한 내용을 즉시 반영)
             var targetPath = Item.DeployFullPath;
             if (targetPath is not null)
-            {
                 await File.WriteAllTextAsync(targetPath, _editText, System.Text.Encoding.UTF8);
-            }
 
             Item.MergedJsonContent = _editText;
             Item.Decision = DeployDecisionValue.Apply;
@@ -231,10 +150,27 @@
         }
     }
 
-    private sealed class MergeRow
+    private static string DetectLanguage(string path) =>
+        Path.GetExtension(path).ToLowerInvariant() switch
+        {
+            ".json"                          => "json",
+            ".xml" or ".config" or ".csproj" => "xml",
+            ".cs"                            => "csharp",
+            ".js"                            => "javascript",
+            ".ts"                            => "typescript",
+            ".html" or ".cshtml" or ".razor" => "html",
+            ".css"                           => "css",
+            ".sql"                           => "sql",
+            ".py"                            => "python",
+            ".yaml" or ".yml"                => "yaml",
+            ".md"                            => "markdown",
+            _                                => "plaintext"
+        };
+
+    public async ValueTask DisposeAsync()
     {
-        public string LeftLineNo { get; init; } = "";
-        public string LeftText   { get; init; } = "";
-        public string LeftClass  { get; init; } = "";
+        try { await JS.InvokeVoidAsync("monacoEditor.dispose", _editorId); }
+        catch { }
+        _dotNetRef?.Dispose();
     }
 }
