@@ -51,19 +51,9 @@ public class FileTreeNodeModel
 
         var result = root.ToNodes();
 
-        // If root files exist, prepend them as a grouped "(ROOT FILES)" folder
-        if (rootFiles.Count > 0)
-        {
-            var rootFileNode = new FileTreeNodeModel
-            {
-                FolderName = "(ROOT FILES)"
-            };
-            foreach (var file in rootFiles.OrderBy(f => Path.GetFileName(f.RelativePath), StringComparer.OrdinalIgnoreCase))
-            {
-                rootFileNode.Children.Add(new FileTreeNodeModel { Item = file });
-            }
-            result.Insert(0, rootFileNode);
-        }
+        // Root-level files are appended directly at the same level as folders
+        foreach (var file in rootFiles.OrderBy(f => Path.GetFileName(f.RelativePath), StringComparer.OrdinalIgnoreCase))
+            result.Add(new FileTreeNodeModel { Item = file });
 
         return result;
     }

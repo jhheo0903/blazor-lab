@@ -4,6 +4,7 @@
 @using DeployTool.Components
 @inject DeploySession Session
 @inject DiffEngine DiffEngine
+@inject FileScanner FileScanner
 @inject NavigationManager Nav
 
 <PageTitle>변경 검토 — DeployTool</PageTitle>
@@ -59,6 +60,18 @@
         </button>
         <button class="btn btn-outline-secondary btn-sm" @onclick="SelectAllSkip">
             <i class="bi bi-skip-forward"></i> 전체 스킵
+        </button>
+        <button class="btn btn-outline-secondary btn-sm" @onclick="RescanAsync" disabled="@_isRescanning"
+                title="로컬 파일 변경사항을 반영해 목록을 다시 불러옵니다">
+            @if (_isRescanning)
+            {
+                <span class="spinner-border spinner-border-sm"></span>
+            }
+            else
+            {
+                <i class="bi bi-arrow-clockwise"></i>
+            }
+            <span> 새로고침</span>
         </button>
     </div>
 </div>
@@ -122,6 +135,7 @@
 @code {
     private bool _showChangesOnly = true;
     private bool _showEditableOnly;
+    private bool _isRescanning;
     private FileChangeItem? _selectedItem;
     private List<FileTreeNodeModel> _treeNodes = [];
     private string _productionText = string.Empty;
@@ -166,14 +180,7 @@
 
         if (item is null || item.IsBinary) return;
 
-        _isLoadingDiff = true;
-        StateHasChanged();
-
-        var (_, productionText, deployText) = await DiffEngine.ComputeFileDiffWithTextAsync(
-            item.ProductionFullPath, item.DeployFullPath);
-        _productionText = productionText;
-        _deployText = deployText;
-        _isLoadingDiff = false;
+        await LoadDiffAsync(item);
     }
 
     private void SelectAllApply()
@@ -188,6 +195,63 @@
         foreach (var item in Session.ChangedItems)
             item.Decision = DeployDecisionValue.Skip;
         RefreshCounts();
+    }
+
+    private async Task RescanAsync()
+    {
+        _isRescanning = true;
+        StateHasChanged();
+
+        try
+        {
+            // 기존 결정(Decision) 보존을 위해 RelativePath → Decision 매핑 저장
+            var previousDecisions = Session.Changes
+                .Where(c => c.Decision != DeployDecisionValue.Pending)
+                .ToDictionary(c => c.RelativePath, c => c.Decision, StringComparer.OrdinalIgnoreCase);
+
+            var newChanges = await FileScanner.ScanChangesAsync(
+                Session.ProductionPath, Session.DeployPath, Session.Scope);
+
+            // 이전 결정 복원
+            foreach (var item in newChanges)
+            {
+                if (previousDecisions.TryGetValue(item.RelativePath, out var decision))
+                    item.Decision = decision;
+            }
+
+            Session.Changes = newChanges;
+
+            // 선택된 파일이 재스캔 후에도 존재하면 유지, 없으면 초기화
+            _selectedItem = _selectedItem is null
+                ? null
+                : newChanges.FirstOrDefault(c =>
+                    c.RelativePath.Equals(_selectedItem.RelativePath, StringComparison.OrdinalIgnoreCase));
+
+            _treeNodes = FileTreeNodeModel.BuildTree(Session.Changes);
+            RefreshCounts();
+
+            // 선택된 파일이 유지됐으면 diff 갱신
+            if (_selectedItem is not null && !_selectedItem.IsBinary)
+                await LoadDiffAsync(_selectedItem);
+        }
+        finally
+        {
+            _isRescanning = false;
+        }
+    }
+
+    private async Task LoadDiffAsync(FileChangeItem item)
+    {
+        _productionText = string.Empty;
+        _deployText = string.Empty;
+        _isLoadingDiff = true;
+        StateHasChanged();
+
+        var (_, productionText, deployText) = await DiffEngine.ComputeFileDiffWithTextAsync(
+            item.ProductionFullPath, item.DeployFullPath);
+        _productionText = productionText;
+        _deployText = deployText;
+        _isLoadingDiff = false;
     }
 
     private void GoToBackup() => Nav.NavigateTo("/deploy/backup");

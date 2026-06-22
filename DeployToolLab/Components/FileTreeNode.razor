@@ -1,5 +1,7 @@
 @using DeployTool.Models
 
+@if (_isVisible)
+{
 <div class="tree-node @(IsSelected ? "selected" : "")">
     <div class="tree-row" @onclick="Select">
         <span class="tree-toggle" @onclick:stopPropagation="true" @onclick="ToggleExpand">
@@ -49,6 +51,7 @@
         </div>
     }
 </div>
+}
 
 @code {
     [Parameter] public FileChangeItem? Item { get; set; }
@@ -61,6 +64,7 @@
     [Parameter] public int Depth { get; set; }
 
     // Pre-computed on parameter set — never recalculated on re-render
+    private bool _isVisible;
     private bool _isExpanded;
     private bool _userToggled; // 사용자가 명시적으로 토글했는지 여부
     private string _nodeKey = string.Empty; // 노드 식별자 — 바뀌면 상태 리셋
@@ -94,8 +98,7 @@
         }
         else if (!_userToggled)
         {
-            // 사용자가 직접 토글하지 않은 경우: depth 0만 기본 펼침
-            _isExpanded = Depth == 0;
+            _isExpanded = false;
         }
         // else: 사용자가 명시적으로 토글한 상태 유지
 
@@ -111,7 +114,46 @@
         }
 
         RefreshVisibleChildren();
+        RefreshVisibility();
     }
+
+    private void RefreshVisibility()
+    {
+        // 폴더 노드는 항상 표시 (자식 필터링은 RefreshVisibleChildren이 담당)
+        if (_hasChildren)
+        {
+            _isVisible = true;
+            return;
+        }
+
+        // 파일 노드: 최상위(Depth==0)에서 직접 렌더될 때만 필터 적용
+        // 하위 자식은 부모의 RefreshVisibleChildren에서 이미 필터링됨
+        if (Depth == 0 && Item is not null)
+        {
+            if (ShowChangesOnly && Item.Status == FileChangeStatus.Identical)
+            {
+                _isVisible = false;
+                return;
+            }
+            if (ShowEditableOnly && !IsEditableExtension(Item.RelativePath))
+            {
+                _isVisible = false;
+                return;
+            }
+        }
+
+        _isVisible = true;
+    }
+
+    private static bool IsEditableExtension(string path) =>
+        Path.GetExtension(path).ToLowerInvariant() switch
+        {
+            ".json" or ".config" or ".xml" or ".ini" or ".yaml" or ".yml"
+                or ".txt" or ".cs" or ".js" or ".ts" or ".html" or ".cshtml"
+                or ".razor" or ".sql" or ".css" or ".md" or ".bat" or ".ps1"
+                or ".sh" or ".properties" or ".env" => true,
+            _ => false
+        };
 
     private void RefreshVisibleChildren()
     {

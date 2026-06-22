@@ -1,6 +1,6 @@
 namespace DeployTool.Models;
 
-public record ScanProgress(string CurrentFile, int FilesScanned, List<FileChangeItem> PartialResults);
+public record ScanProgress(string CurrentFile, int FilesScanned, int TotalFiles, List<FileChangeItem> PartialResults);
 
 public enum DeployStep
 {

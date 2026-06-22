@@ -92,6 +92,10 @@ public class FileScanner(ILogger<FileScanner> _logger)
         var bag = new ConcurrentBag<FileChangeItem>();
         var sw = Stopwatch.StartNew();
 
+        // 전체 파일 수 미리 집계 — 진행률 표시용
+        var totalFiles = CountTotalFiles(productionPath, deployPath, scope);
+        progress?.Report(new ScanProgress(string.Empty, 0, totalFiles, []));
+
         // Throttled progress reporting — flush at most every 120 ms
         var lastFlush = 0L;
         var filesScanned = 0;
@@ -106,6 +110,7 @@ public class FileScanner(ILogger<FileScanner> _logger)
                 progress?.Report(new ScanProgress(
                     Path.GetFileName(currentFile),
                     filesScanned,
+                    totalFiles,
                     bag.ToList()));
             }
         }
@@ -168,7 +173,7 @@ public class FileScanner(ILogger<FileScanner> _logger)
         LinkPdbFiles(results);
 
         // Final progress flush
-        progress?.Report(new ScanProgress(string.Empty, filesScanned, results));
+        progress?.Report(new ScanProgress(string.Empty, filesScanned, totalFiles, results));
 
         _logger.LogInformation("Scan complete: {Count} files in {Ms}ms", results.Count, sw.ElapsedMilliseconds);
         return results;
@@ -348,6 +353,46 @@ public class FileScanner(ILogger<FileScanner> _logger)
             var baseName = Path.ChangeExtension(pdb.RelativePath, null);
             if (dllMap.TryGetValue(baseName, out var dll))
                 dll.LinkedPdbPath = pdb.RelativePath;
+        }
+    }
+
+    private static int CountTotalFiles(string productionPath, string deployPath, ScopeSelection scope)
+    {
+        try
+        {
+            if (scope.Mode == ScopeMode.FullCompare)
+            {
+                var prodCount = Directory.Exists(productionPath)
+                    ? Directory.GetFiles(productionPath, "*", SearchOption.AllDirectories).Length
+                    : 0;
+                var deployCount = Directory.Exists(deployPath)
+                    ? Directory.GetFiles(deployPath, "*", SearchOption.AllDirectories).Length
+                    : 0;
+                // deploy 쪽 파일 + prod에만 있는 파일(삭제 대상) — 중복 제거를 위해 최대값 사용
+                return Math.Max(prodCount, deployCount);
+            }
+
+            var total = 0;
+            foreach (var folder in scope.SelectedFolders)
+            {
+                if (folder.IsRoot)
+                {
+                    total += SafeGetFiles(productionPath).Length;
+                    total += SafeGetFiles(deployPath).Length;
+                    continue;
+                }
+                var pd = Path.Combine(productionPath, folder.Name);
+                var dd = Path.Combine(deployPath, folder.Name);
+                if (Directory.Exists(pd))
+                    total += Directory.GetFiles(pd, "*", SearchOption.AllDirectories).Length;
+                if (Directory.Exists(dd))
+                    total += Directory.GetFiles(dd, "*", SearchOption.AllDirectories).Length;
+            }
+            return total;
+        }
+        catch
+        {
+            return 0;
         }
     }
 

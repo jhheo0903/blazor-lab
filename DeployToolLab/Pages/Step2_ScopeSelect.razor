@@ -97,7 +97,14 @@
             <div style="flex:1;min-width:0;">
                 <div style="display:flex;justify-content:space-between;margin-bottom:6px;">
                     <span style="font-size:12.5px;font-weight:600;">병렬 스캔 중...</span>
-                    <span style="font-size:12px;color:var(--c-text-2);">@_filesScanned 개 처리됨</span>
+                    <span style="font-size:12px;color:var(--c-text-2);">
+                        @_filesScanned 개
+                        @if (_totalFiles > 0)
+                        {
+                            <span> / @_totalFiles 개</span>
+                        }
+                        <span> 처리됨</span>
+                    </span>
                 </div>
                 <div class="progress-bar-track">
                     <div class="progress-bar-fill" style="width:@(_scanProgressWidth)%;"></div>
@@ -133,6 +140,7 @@
     private bool _isScanning;
     private string _currentFile = string.Empty;
     private int _filesScanned;
+    private int _totalFiles;
     private int _scanProgressWidth = 0;
     private List<FileChangeItem> _partialChanges = [];
     private System.Threading.Timer? _progressTimer;
@@ -151,6 +159,7 @@
     {
         _isScanning = true;
         _filesScanned = 0;
+        _totalFiles = 0;
         _scanProgressWidth = 0;
         _partialChanges = [];
 
@@ -168,6 +177,7 @@
         {
             _currentFile = p.CurrentFile;
             _filesScanned = p.FilesScanned;
+            _totalFiles = p.TotalFiles;
             _partialChanges = p.PartialResults;
             InvokeAsync(StateHasChanged);
         });

@@ -96,6 +96,7 @@
             string? result = null;
             var thread = new System.Threading.Thread(() =>
             {
+                using var owner = new ForegroundWindow();
                 using var dlg = new System.Windows.Forms.FolderBrowserDialog
                 {
                     Description = forProduction ? "운영 경로 선택" : "배포 파일 경로 선택",
@@ -105,7 +106,7 @@
                         ? Session.ProductionPath
                         : Session.DeployPath
                 };
-                if (dlg.ShowDialog() == System.Windows.Forms.DialogResult.OK)
+                if (dlg.ShowDialog(owner) == System.Windows.Forms.DialogResult.OK)
                     result = dlg.SelectedPath;
             });
             thread.SetApartmentState(System.Threading.ApartmentState.STA);
@@ -120,6 +121,35 @@
         else
             Session.DeployPath = path;
         StateHasChanged();
+    }
+
+    // FolderBrowserDialog에 오너 핸들을 제공해 브라우저 뒤로 숨는 문제를 방지한다.
+    private sealed class ForegroundWindow : System.Windows.Forms.IWin32Window, IDisposable
+    {
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        private static extern bool SetForegroundWindow(IntPtr hWnd);
+
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        private static extern IntPtr GetForegroundWindow();
+
+        private readonly System.Windows.Forms.NativeWindow _nativeWindow = new();
+
+        public ForegroundWindow()
+        {
+            var cp = new System.Windows.Forms.CreateParams
+            {
+                Style = 0x800000,   // WS_BORDER
+                ExStyle = 0x8,      // WS_EX_TOPMOST
+                Width = 0,
+                Height = 0,
+            };
+            _nativeWindow.CreateHandle(cp);
+            SetForegroundWindow(_nativeWindow.Handle);
+        }
+
+        public IntPtr Handle => _nativeWindow.Handle;
+
+        public void Dispose() => _nativeWindow.DestroyHandle();
     }
 
 

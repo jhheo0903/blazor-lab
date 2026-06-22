@@ -19,12 +19,12 @@
     <p class="page-subtitle">Pre-flight 검사 후 실제 파일 배포를 실행합니다.</p>
 </div>
 
-@* 뷰포트를 꽉 채우는 flex 컨테이너 (content 패딩 56px + 페이지 헤더 ~88px 제외) *@
-<div style="display:flex;flex-direction:column;height:calc(100vh - 200px);max-width:600px;overflow:hidden;gap:20px;">
+@* 전체 높이 컨테이너 *@
+<div style="height:calc(100vh - 200px);display:flex;overflow:hidden;">
 
     @if (!_preflightDone)
     {
-        <div style="display:flex;flex-direction:column;align-items:center;padding:40px 0;gap:16px;text-align:center;">
+        <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;flex:1;gap:16px;text-align:center;">
             @if (_isChecking)
             {
                 <div class="spinner-border" style="width:28px;height:28px;"></div>
@@ -44,8 +44,8 @@
     }
     else
     {
-        @* ── 상단 고정 영역: pre-flight + 서비스/풀 + 배포 버튼 ── *@
-        <div style="flex-shrink:0;display:flex;flex-direction:column;gap:16px;">
+        @* ── 왼쪽: pre-flight + 서비스/풀 + 배포 버튼 ── *@
+        <div style="width:460px;min-width:460px;display:flex;flex-direction:column;gap:16px;overflow-y:auto;padding-right:20px;">
 
             @* Pre-flight 결과 *@
             <div>
@@ -158,8 +158,11 @@
             }
         </div>
 
-        @* ── 배포 로그 (남은 공간 전체를 차지하며 내부만 스크롤) ── *@
-        <div style="flex:1;min-height:0;display:flex;flex-direction:column;">
+        @* ── 구분선 ── *@
+        <div style="width:1px;background:var(--c-border);margin:0 4px;flex-shrink:0;"></div>
+
+        @* ── 오른쪽: 배포 로그 ── *@
+        <div style="flex:1;min-width:0;display:flex;flex-direction:column;padding-left:20px;">
             <div class="section-label" style="display:flex;align-items:center;gap:8px;flex-shrink:0;">
                 <i class="bi bi-terminal" style="color:var(--c-green);"></i>배포 로그
                 @if (Session.IsDeploying)
@@ -239,6 +242,7 @@
         _isStopping = false;
 
         await DeployExecutor.ExecuteDeployAsync(Session);
+        StateHasChanged();
     }
 
     private void ToggleService(string name, bool selected)
