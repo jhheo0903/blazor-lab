@@ -21,10 +21,16 @@ public class BackupService(ILogger<BackupService> logger)
         }
         else
         {
-            foreach (var folder in scope.SelectedFolders)
+            var selectedPaths = scope.FolderTree
+                .SelectMany(n => n.Flatten())
+                .Where(n => n.IsSelected && (n.Children.Count == 0 || n.Children.All(c => !c.IsSelected)))
+                .Select(n => n.RelativePath)
+                .Distinct(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var relPath in selectedPaths)
             {
-                var srcFolder = Path.Combine(productionPath, folder.Name);
-                var dstFolder = Path.Combine(backupRoot, folder.Name);
+                var srcFolder = Path.Combine(productionPath, relPath);
+                var dstFolder = Path.Combine(backupRoot, relPath);
                 if (Directory.Exists(srcFolder))
                     await CopyDirectoryAsync(srcFolder, dstFolder, backupParent, scope.ExcludePatterns, progress);
             }

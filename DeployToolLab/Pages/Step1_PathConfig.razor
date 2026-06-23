@@ -2,7 +2,6 @@
 @using DeployTool.Models
 @using DeployTool.Services
 @inject DeploySession Session
-@inject FileScanner FileScanner
 @inject NavigationManager Nav
 
 <PageTitle>경로 설정 — DeployTool</PageTitle>
@@ -56,29 +55,20 @@
         </div>
     }
 
-        <button type="button"
+    <button type="button"
             class="btn btn-primary"
             style="align-self:flex-start;min-width:160px;"
-            @onclick="StartQuickScanAsync"
-            @onclick:preventDefault="true"
-            disabled="@_isScanning">
-        @if (_isScanning)
-        {
-            <span class="spinner-border spinner-border-sm"></span>
-            <span>스캔 중...</span>
-        }
-        else
-        {
-            <i class="bi bi-lightning-charge"></i>
-            <span>빠른 스캔 시작</span>
-        }
+            @onclick="GoToScopeAsync"
+            @onclick:preventDefault="true">
+        <i class="bi bi-arrow-right-circle"></i>
+        <span>다음 단계</span>
     </button>
 
     <div class="info-box">
         <div class="info-box-title"><i class="bi bi-info-circle me-1"></i>안내</div>
         <ul>
-            <li>빠른 스캔은 최상위 폴더 목록만 열거합니다 (1~2초)</li>
-            <li>전체 파일 분석은 다음 단계에서 범위를 선택 후 실행됩니다</li>
+            <li>경로를 입력하면 다음 단계에서 폴더 목록을 자동으로 불러옵니다</li>
+            <li>전체 비교 또는 원하는 폴더만 선택해 부분 배포할 수 있습니다</li>
             <li>각 서버에서 독립적으로 실행하세요</li>
         </ul>
     </div>
@@ -86,7 +76,6 @@
 </div>
 
 @code {
-    private bool _isScanning;
     private string? _errorMessage;
 
     private async Task OpenPicker(bool forProduction)
@@ -123,6 +112,26 @@
         StateHasChanged();
     }
 
+    private void GoToScopeAsync()
+    {
+        _errorMessage = null;
+
+        if (!Directory.Exists(Session.ProductionPath))
+        {
+            _errorMessage = $"운영 경로가 존재하지 않습니다: {Session.ProductionPath}";
+            return;
+        }
+        if (!Directory.Exists(Session.DeployPath))
+        {
+            _errorMessage = $"배포 경로가 존재하지 않습니다: {Session.DeployPath}";
+            return;
+        }
+
+        Session.Scope = new ScopeSelection();
+        Session.CurrentStep = DeployStep.ScopeSelect;
+        Nav.NavigateTo("/deploy/scope");
+    }
+
     // FolderBrowserDialog에 오너 핸들을 제공해 브라우저 뒤로 숨는 문제를 방지한다.
     private sealed class ForegroundWindow : System.Windows.Forms.IWin32Window, IDisposable
     {
@@ -150,40 +159,5 @@
         public IntPtr Handle => _nativeWindow.Handle;
 
         public void Dispose() => _nativeWindow.DestroyHandle();
-    }
-
-
-    private async Task StartQuickScanAsync()
-    {
-        _errorMessage = null;
-
-        if (!Directory.Exists(Session.ProductionPath))
-        {
-            _errorMessage = $"운영 경로가 존재하지 않습니다: {Session.ProductionPath}";
-            return;
-        }
-        if (!Directory.Exists(Session.DeployPath))
-        {
-            _errorMessage = $"배포 경로가 존재하지 않습니다: {Session.DeployPath}";
-            return;
-        }
-
-        _isScanning = true;
-        try
-        {
-            var folders = await FileScanner.QuickScanTopLevelFoldersAsync(
-                Session.ProductionPath, Session.DeployPath);
-            Session.Scope = new ScopeSelection { AvailableFolders = folders };
-            Session.CurrentStep = DeployStep.ScopeSelect;
-            Nav.NavigateTo("/deploy/scope");
-        }
-        catch (Exception ex)
-        {
-            _errorMessage = $"빠른 스캔 중 오류가 발생했습니다: {ex.Message}";
-        }
-        finally
-        {
-            _isScanning = false;
-        }
     }
 }

@@ -1,3 +1,5 @@
+using System.Collections.Concurrent;
+
 namespace DeployTool.Models;
 
 public record ScanProgress(string CurrentFile, int FilesScanned, int TotalFiles, List<FileChangeItem> PartialResults);
@@ -26,7 +28,7 @@ public class DeploySession
     public string? BackupPath { get; set; }
     public DateTime? BackupCreatedAt { get; set; }
 
-    public List<DeployLogEntry> DeployLog { get; set; } = [];
+    public ConcurrentBag<DeployLogEntry> DeployLog { get; set; } = [];
     public bool IsDeploying { get; set; }
     public bool IsDeployDone { get; set; }
 

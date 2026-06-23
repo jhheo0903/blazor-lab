@@ -6,8 +6,6 @@ namespace DeployTool.Services;
 
 public class FileScanner(ILogger<FileScanner> _logger)
 {
-    private const string RootNodeName = ".";
-
     private static readonly HashSet<string> BinaryExtensions =
     [
         ".dll", ".exe", ".pdb", ".so", ".dylib", ".bin", ".zip", ".7z", ".rar"
@@ -19,64 +17,59 @@ public class FileScanner(ILogger<FileScanner> _logger)
         MaxDegreeOfParallelism = Math.Min(Environment.ProcessorCount * 2, 16)
     };
 
-    public async Task<List<FolderNode>> QuickScanTopLevelFoldersAsync(
+    /// <summary>
+    /// 운영/배포 양쪽 경로를 재귀적으로 탐색해 트리 형태의 FolderNode 목록을 반환합니다.
+    /// </summary>
+    public async Task<List<FolderNode>> BuildFolderTreeAsync(
         string productionPath, string deployPath)
     {
-        return await Task.Run(() =>
+        return await Task.Run(() => BuildChildren(productionPath, deployPath, string.Empty, 0));
+    }
+
+    private static List<FolderNode> BuildChildren(
+        string productionBase, string deployBase,
+        string relativeParent, int depth)
+    {
+        var prodDir = Path.Combine(productionBase, relativeParent);
+        var deployDir = Path.Combine(deployBase, relativeParent);
+
+        var prodNames = Directory.Exists(prodDir)
+            ? SafeGetDirectories(prodDir).Select(d => Path.GetFileName(d) ?? string.Empty).ToHashSet(StringComparer.OrdinalIgnoreCase)
+            : [];
+        var deployNames = Directory.Exists(deployDir)
+            ? SafeGetDirectories(deployDir).Select(d => Path.GetFileName(d) ?? string.Empty).ToHashSet(StringComparer.OrdinalIgnoreCase)
+            : [];
+
+        var allNames = prodNames.Union(deployNames, StringComparer.OrdinalIgnoreCase)
+                                .OrderBy(n => n, StringComparer.OrdinalIgnoreCase)
+                                .ToList();
+
+        var nodes = new List<FolderNode>(allNames.Count);
+        foreach (var name in allNames)
         {
-            var productionDirs = SafeGetDirectories(productionPath);
-            var deployDirs = SafeGetDirectories(deployPath);
+            var relPath = string.IsNullOrEmpty(relativeParent)
+                ? name
+                : relativeParent + Path.DirectorySeparatorChar + name;
 
-            var prodNames = productionDirs
-                .Select(Path.GetFileName)
-                .ToHashSet(StringComparer.OrdinalIgnoreCase);
-            var deployNames = deployDirs
-                .Select(Path.GetFileName)
-                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var children = BuildChildren(productionBase, deployBase, relPath, depth + 1);
 
-            var results = new ConcurrentBag<FolderNode>();
+            var fileCountDir = Directory.Exists(Path.Combine(deployBase, relPath))
+                ? Path.Combine(deployBase, relPath)
+                : Path.Combine(productionBase, relPath);
 
-            Parallel.ForEach(deployDirs, _parallelOpts, dir =>
+            nodes.Add(new FolderNode
             {
-                var name = Path.GetFileName(dir) ?? string.Empty;
-                results.Add(new FolderNode
-                {
-                    Name = name,
-                    FullPath = dir,
-                    IsNewInDeploy = !prodNames.Contains(name),
-                    EstimatedFileCount = SafeCountFiles(dir)
-                });
+                Name = name,
+                RelativePath = relPath,
+                Depth = depth,
+                IsExpanded = depth < 2,
+                IsNewInDeploy = deployNames.Contains(name) && !prodNames.Contains(name),
+                IsOnlyInProduction = prodNames.Contains(name) && !deployNames.Contains(name),
+                EstimatedFileCount = SafeCountTopFiles(fileCountDir),
+                Children = children
             });
-
-            Parallel.ForEach(productionDirs, _parallelOpts, dir =>
-            {
-                var name = Path.GetFileName(dir) ?? string.Empty;
-                if (!deployNames.Contains(name))
-                {
-                    results.Add(new FolderNode
-                    {
-                        Name = name,
-                        FullPath = dir,
-                        IsOnlyInProduction = true,
-                        EstimatedFileCount = SafeCountFiles(dir)
-                    });
-                }
-            });
-
-            var rootFileCount = SafeCountDistinctTopLevelFiles(productionPath, deployPath);
-            if (rootFileCount > 0)
-            {
-                results.Add(new FolderNode
-                {
-                    Name = RootNodeName,
-                    FullPath = deployPath,
-                    IsRoot = true,
-                    EstimatedFileCount = rootFileCount
-                });
-            }
-
-            return results.OrderBy(f => f.Name).ToList();
-        });
+        }
+        return nodes;
     }
 
     /// <summary>
@@ -92,9 +85,9 @@ public class FileScanner(ILogger<FileScanner> _logger)
         var bag = new ConcurrentBag<FileChangeItem>();
         var sw = Stopwatch.StartNew();
 
-        // 전체 파일 수 미리 집계 — 진행률 표시용
-        var totalFiles = CountTotalFiles(productionPath, deployPath, scope);
-        progress?.Report(new ScanProgress(string.Empty, 0, totalFiles, []));
+        // 전체 파일 수 집계를 스캔과 병렬로 실행 — 큰 디렉터리에서 초기 대기 없이 즉시 스캔 시작
+        var totalFiles = 0;
+        var countTask = Task.Run(() => CountTotalFiles(productionPath, deployPath, scope));
 
         // Throttled progress reporting — flush at most every 120 ms
         var lastFlush = 0L;
@@ -110,7 +103,7 @@ public class FileScanner(ILogger<FileScanner> _logger)
                 progress?.Report(new ScanProgress(
                     Path.GetFileName(currentFile),
                     filesScanned,
-                    totalFiles,
+                    Volatile.Read(ref totalFiles),
                     bag.ToList()));
             }
         }
@@ -148,32 +141,38 @@ public class FileScanner(ILogger<FileScanner> _logger)
         }
         else
         {
-            foreach (var folder in scope.SelectedFolders)
-            {
-                if (folder.IsRoot)
-                {
-                    scanTasks.Add(ScanOneLevelAsync(
-                        productionPath, deployPath,
-                        productionPath, deployPath,
-                        scope.ExcludePatterns, bag, ReportThrottled));
-                    continue;
-                }
+            // 선택된 노드들의 상대 경로를 수집 (자식이 있으면 자식 기준, 없으면 자신)
+            var selectedPaths = scope.FolderTree
+                .SelectMany(n => n.Flatten())
+                .Where(n => n.IsSelected && (n.Children.Count == 0 || n.Children.All(c => !c.IsSelected)))
+                .Select(n => n.RelativePath)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
 
-                var pd = Path.Combine(productionPath, folder.Name);
-                var dd = Path.Combine(deployPath, folder.Name);
+            foreach (var relPath in selectedPaths)
+            {
+                var pd = Path.Combine(productionPath, relPath);
+                var dd = Path.Combine(deployPath, relPath);
                 scanTasks.Add(ScanDirectoryParallelAsync(
                     pd, dd, productionPath, deployPath,
                     scope.ExcludePatterns, bag, ReportThrottled));
             }
         }
 
-        await Task.WhenAll(scanTasks);
+        // countTask가 완료되면 totalFiles 갱신 (스캔과 병렬 실행)
+        _ = countTask.ContinueWith(t =>
+        {
+            if (t.IsCompletedSuccessfully)
+                Volatile.Write(ref totalFiles, t.Result);
+        }, TaskScheduler.Default);
+
+        await Task.WhenAll([.. scanTasks, countTask]);
 
         var results = bag.ToList();
         LinkPdbFiles(results);
 
         // Final progress flush
-        progress?.Report(new ScanProgress(string.Empty, filesScanned, totalFiles, results));
+        progress?.Report(new ScanProgress(string.Empty, filesScanned, Volatile.Read(ref totalFiles), results));
 
         _logger.LogInformation("Scan complete: {Count} files in {Ms}ms", results.Count, sw.ElapsedMilliseconds);
         return results;
@@ -368,21 +367,21 @@ public class FileScanner(ILogger<FileScanner> _logger)
                 var deployCount = Directory.Exists(deployPath)
                     ? Directory.GetFiles(deployPath, "*", SearchOption.AllDirectories).Length
                     : 0;
-                // deploy 쪽 파일 + prod에만 있는 파일(삭제 대상) — 중복 제거를 위해 최대값 사용
                 return Math.Max(prodCount, deployCount);
             }
 
+            var selectedPaths = scope.FolderTree
+                .SelectMany(n => n.Flatten())
+                .Where(n => n.IsSelected && (n.Children.Count == 0 || n.Children.All(c => !c.IsSelected)))
+                .Select(n => n.RelativePath)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
             var total = 0;
-            foreach (var folder in scope.SelectedFolders)
+            foreach (var relPath in selectedPaths)
             {
-                if (folder.IsRoot)
-                {
-                    total += SafeGetFiles(productionPath).Length;
-                    total += SafeGetFiles(deployPath).Length;
-                    continue;
-                }
-                var pd = Path.Combine(productionPath, folder.Name);
-                var dd = Path.Combine(deployPath, folder.Name);
+                var pd = Path.Combine(productionPath, relPath);
+                var dd = Path.Combine(deployPath, relPath);
                 if (Directory.Exists(pd))
                     total += Directory.GetFiles(pd, "*", SearchOption.AllDirectories).Length;
                 if (Directory.Exists(dd))
@@ -431,24 +430,12 @@ public class FileScanner(ILogger<FileScanner> _logger)
         catch { return []; }
     }
 
-    private static int SafeCountFiles(string path)
+    private static int SafeCountTopFiles(string path)
     {
         try { return Directory.GetFiles(path, "*", SearchOption.TopDirectoryOnly).Length; }
         catch { return 0; }
     }
 
-    private static int SafeCountDistinctTopLevelFiles(string productionPath, string deployPath)
-    {
-        var productionFiles = Directory.Exists(productionPath) ? SafeGetFiles(productionPath) : [];
-        var deployFiles = Directory.Exists(deployPath) ? SafeGetFiles(deployPath) : [];
-
-        return productionFiles
-            .Select(Path.GetFileName)
-            .Concat(deployFiles.Select(Path.GetFileName))
-            .Where(name => !string.IsNullOrWhiteSpace(name))
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .Count();
-    }
 
     private static long? GetFileSize(string path)
     {

@@ -3,7 +3,7 @@
 @implements IAsyncDisposable
 
 <div class="deploy-log" @ref="_logContainer">
-    @foreach (var entry in Entries)
+    @foreach (var entry in Entries.OrderBy(e => e.Timestamp))
     {
         <div class="log-line @GetLineClass(entry)">
             <span class="log-time">[@entry.Timestamp.ToString("HH:mm:ss")]</span>
@@ -17,7 +17,7 @@
 </div>
 
 @code {
-    [Parameter] public List<DeployLogEntry> Entries { get; set; } = [];
+    [Parameter] public IEnumerable<DeployLogEntry> Entries { get; set; } = [];
     [Parameter] public string HubUrl { get; set; } = "/deployhub";
 
     private HubConnection? _hubConnection;
@@ -30,11 +30,9 @@
             .WithAutomaticReconnect()
             .Build();
 
-        _hubConnection.On<string, bool, bool>("ReceiveLog", (msg, isError, isWarning) =>
-        {
-            Entries.Add(new DeployLogEntry { Message = msg, IsError = isError, IsWarning = isWarning });
-            InvokeAsync(StateHasChanged);
-        });
+        // DeployExecutor가 session.DeployLog에 추가하므로 여기서는 UI만 갱신
+        _hubConnection.On<string, bool, bool>("ReceiveLog", (_, _, _) =>
+            InvokeAsync(StateHasChanged));
 
         await _hubConnection.StartAsync();
     }

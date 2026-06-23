@@ -230,19 +230,19 @@
             var (ok, msg) = await ServiceManager.StopAsync(svc);
             _stopResults.Add((ok, msg));
             if (ok) Session.StoppedServices.Add(svc);
-            StateHasChanged();
+            await InvokeAsync(StateHasChanged);
         }
         foreach (var pool in Session.SelectedAppPools)
         {
             var (ok, msg) = await PoolManager.StopAsync(pool);
             _stopResults.Add((ok, msg));
             if (ok) Session.StoppedAppPools.Add(pool);
-            StateHasChanged();
+            await InvokeAsync(StateHasChanged);
         }
         _isStopping = false;
 
         await DeployExecutor.ExecuteDeployAsync(Session);
-        StateHasChanged();
+        await InvokeAsync(StateHasChanged);
     }
 
     private void ToggleService(string name, bool selected)

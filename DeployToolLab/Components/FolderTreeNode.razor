@@ -1,0 +1,63 @@
+@using DeployTool.Models
+
+<div style="display:flex;flex-direction:column;">
+    <div class="folder-check-row" style="padding-left:@(Node.Depth * 18)px;">
+        @* 펼침/접힘 토글 — label 밖에 독립 배치해 checkbox 트리거 차단 *@
+        @if (Node.Children.Count > 0)
+        {
+            <span style="width:16px;cursor:pointer;color:var(--c-text-3);flex-shrink:0;user-select:none;"
+                  @onclick="ToggleExpand">
+                <i class="bi @(Node.IsExpanded ? "bi-chevron-down" : "bi-chevron-right")" style="font-size:11px;"></i>
+            </span>
+        }
+        else
+        {
+            <span style="width:16px;flex-shrink:0;"></span>
+        }
+
+        <label style="display:flex;align-items:center;gap:6px;flex:1;cursor:pointer;margin:0;">
+            <input class="form-check-input" type="checkbox"
+                   checked="@Node.IsSelected"
+                   @onchange="OnCheckedChange" />
+
+            <i class="bi @(Node.Children.Count > 0 ? "bi-folder" : "bi-folder2")"
+               style="font-size:12px;color:var(--c-text-3);"></i>
+
+            <span style="font-size:13px;font-family:var(--mono);flex:1;">@Node.Name</span>
+
+            @if (!string.IsNullOrEmpty(Node.Badge))
+            {
+                <span style="font-size:12px;"
+                      title="@(Node.IsNewInDeploy ? "배포에만 있는 신규 폴더" : "운영에만 있는 폴더 (배포 없음)")">
+                    @Node.Badge
+                </span>
+            }
+
+            <span style="font-size:11.5px;color:var(--c-text-3);">@Node.EstimatedFileCount 개</span>
+        </label>
+    </div>
+
+    @* 하위 노드 재귀 렌더링 *@
+    @if (Node.IsExpanded && Node.Children.Count > 0)
+    {
+        @foreach (var child in Node.Children)
+        {
+            <FolderTreeNode Node="child" OnChanged="OnChanged" />
+        }
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public FolderNode Node { get; set; } = default!;
+    [Parameter] public EventCallback OnChanged { get; set; }
+
+    private void ToggleExpand() => Node.IsExpanded = !Node.IsExpanded;
+
+    private async Task OnCheckedChange(ChangeEventArgs e)
+    {
+        var selected = (bool)(e.Value ?? false);
+        foreach (var node in Node.Flatten())
+            node.IsSelected = selected;
+        await OnChanged.InvokeAsync();
+    }
+}
