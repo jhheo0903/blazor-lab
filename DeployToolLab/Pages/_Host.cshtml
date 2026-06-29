@@ -87,6 +87,11 @@
     <script src="~/js/monacoEditor.js"></script>
     <script src="~/_framework/blazor.server.js" autostart="false"></script>
     <script>
+        function setCheckboxIndeterminate(el, indeterminate) {
+            if (el) el.indeterminate = indeterminate;
+        }
+    </script>
+    <script>
         Blazor.start({
             reconnectionOptions: {
                 // 재연결 시도: 0s, 2s, 10s, 30s, 60s 간격으로 최대 20회

@@ -62,7 +62,7 @@ public class FileScanner(ILogger<FileScanner> _logger)
                 Name = name,
                 RelativePath = relPath,
                 Depth = depth,
-                IsExpanded = depth < 2,
+                IsExpanded = false,
                 IsNewInDeploy = deployNames.Contains(name) && !prodNames.Contains(name),
                 IsOnlyInProduction = prodNames.Contains(name) && !deployNames.Contains(name),
                 EstimatedFileCount = SafeCountTopFiles(fileCountDir),

@@ -1,18 +1,24 @@
-window.monacoEditor = (() => {
+globalThis.monacoEditor = (() => {
     const _inst = {};
 
     const ensureMonaco = () => new Promise(resolve => {
-        if (window.monaco) { resolve(); return; }
+        if (globalThis.monaco) { resolve(); return; }
         require(['vs/editor/editor.main'], resolve);
     });
 
-    // 두 모델의 라인 수 중 큰 쪽의 자릿수를 계산해 양쪽 에디터에 동일하게 적용
     function syncLineNumberWidth(i) {
         const maxLines = Math.max(i.origModel.getLineCount(), i.modModel.getLineCount());
         const minChars = String(maxLines).length;
         const opts = { lineNumbersMinChars: minChars, glyphMargin: false };
         i.editor.getOriginalEditor().updateOptions(opts);
         i.editor.getModifiedEditor().updateOptions(opts);
+    }
+
+    // setValue/updateModel 같은 프로그래매틱 변경 시 onDidChangeContent 무시
+    function setProgrammatic(i, modifiedText) {
+        i.programmatic = true;
+        i.modModel.setValue(modifiedText ?? '');
+        i.programmatic = false;
     }
 
     return {
@@ -51,22 +57,21 @@ window.monacoEditor = (() => {
             });
 
             editor.setModel({ original: origModel, modified: modModel });
-            const inst = { editor, origModel, modModel };
+            const inst = { editor, origModel, modModel, programmatic: false };
             _inst[containerId] = inst;
 
             syncLineNumberWidth(inst);
 
-            // 편집으로 라인 수가 변하면 너비 재동기화
-            modModel.onDidChangeContent(() => {
+            // 사용자 편집만 감지 — diff editor의 modified editor 인스턴스에 직접 등록
+            let dirtyTimer;
+            editor.getModifiedEditor().onDidChangeModelContent(() => {
                 syncLineNumberWidth(inst);
-            });
-
-            let timer;
-            modModel.onDidChangeContent(() => {
-                clearTimeout(timer);
-                timer = setTimeout(() => {
-                    dotnetRef.invokeMethodAsync('OnMonacoChange', modModel.getValue());
-                }, 250);
+                if (inst.programmatic) return;
+                clearTimeout(dirtyTimer);
+                dirtyTimer = setTimeout(() => {
+                    dotnetRef.invokeMethodAsync('OnMonacoDirty')
+                        .catch(e => console.error('[monacoEditor] OnMonacoDirty 실패', e));
+                }, 300);
             });
         },
 
@@ -74,15 +79,21 @@ window.monacoEditor = (() => {
             const i = _inst[containerId];
             if (!i) return;
             i.origModel.setValue(originalText ?? '');
-            i.modModel.setValue(modifiedText  ?? '');
+            setProgrammatic(i, modifiedText);
             syncLineNumberWidth(i);
         },
 
         setValue(containerId, text) {
             const i = _inst[containerId];
             if (!i) return;
-            i.modModel.setValue(text ?? '');
+            setProgrammatic(i, text);
             syncLineNumberWidth(i);
+        },
+
+        getValue(containerId) {
+            const i = _inst[containerId];
+            if (!i) return '';
+            return i.modModel.getValue();
         },
 
         dispose(containerId) {

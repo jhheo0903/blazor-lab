@@ -62,7 +62,6 @@
     private readonly string _editorId = "monaco-" + Guid.NewGuid().ToString("N")[..8];
     private DotNetObjectReference<TextDiffPanel>? _dotNetRef;
 
-    private string _editText = string.Empty;
     private bool _isDirty;
     private bool _savedOk;
     private string? _saveError;
@@ -76,7 +75,6 @@
         if (_lastItemId == newId) return;
 
         _lastItemId = newId;
-        _editText   = Item.MergedJsonContent ?? DeployText;
         _isDirty    = Item.MergedJsonContent is not null && Item.MergedJsonContent != DeployText;
         _savedOk    = Item.Decision == DeployDecisionValue.Apply && Item.MergedJsonContent is not null;
         _saveError  = null;
@@ -91,7 +89,7 @@
             await JS.InvokeVoidAsync("monacoEditor.createDiff",
                 _editorId,
                 ProductionText,
-                _editText,
+                Item.MergedJsonContent ?? DeployText,
                 DetectLanguage(Item.RelativePath),
                 Item.Status == FileChangeStatus.Deleted,
                 _dotNetRef);
@@ -102,23 +100,21 @@
         {
             _pendingModelUpdate = false;
             await JS.InvokeVoidAsync("monacoEditor.updateModel",
-                _editorId, ProductionText, _editText);
+                _editorId, ProductionText, Item.MergedJsonContent ?? DeployText);
         }
     }
 
     [JSInvokable]
-    public void OnMonacoChange(string value)
+    public void OnMonacoDirty()
     {
-        _editText  = value;
-        _isDirty   = value != (Item.MergedJsonContent ?? DeployText);
-        _savedOk   = false;
+        _isDirty = true;
+        _savedOk = false;
         _saveError = null;
         StateHasChanged();
     }
 
     private async Task ResetToOriginalAsync()
     {
-        _editText  = DeployText;
         _isDirty   = false;
         _savedOk   = false;
         _saveError = null;
@@ -134,11 +130,13 @@
         _saveError = null;
         try
         {
+            var currentText = await JS.InvokeAsync<string>("monacoEditor.getValue", _editorId);
+
             var targetPath = Item.DeployFullPath;
             if (targetPath is not null)
-                await File.WriteAllTextAsync(targetPath, _editText, System.Text.Encoding.UTF8);
+                await File.WriteAllTextAsync(targetPath, currentText, System.Text.Encoding.UTF8);
 
-            Item.MergedJsonContent = _editText;
+            Item.MergedJsonContent = currentText;
             Item.Decision = DeployDecisionValue.Apply;
             _isDirty = false;
             _savedOk = true;

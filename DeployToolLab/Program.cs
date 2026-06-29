@@ -34,7 +34,7 @@ builder.Services.AddSignalR(options =>
     options.ClientTimeoutInterval = TimeSpan.FromSeconds(120);
     options.HandshakeTimeout      = TimeSpan.FromSeconds(30);
     options.KeepAliveInterval     = TimeSpan.FromSeconds(25);
-    options.MaximumReceiveMessageSize = 64 * 1024; // 64 KB
+    options.MaximumReceiveMessageSize = 4 * 1024 * 1024; // 4 MB
 });
 
 builder.Services.AddScoped<DeploySession>();

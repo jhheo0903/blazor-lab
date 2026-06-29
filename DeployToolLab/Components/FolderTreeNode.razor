@@ -1,4 +1,5 @@
 @using DeployTool.Models
+@inject IJSRuntime JS
 
 <div style="display:flex;flex-direction:column;">
     <div class="folder-check-row" style="padding-left:@(Node.Depth * 18)px;">
@@ -16,7 +17,8 @@
         }
 
         <label style="display:flex;align-items:center;gap:6px;flex:1;cursor:pointer;margin:0;">
-            <input class="form-check-input" type="checkbox"
+            <input @ref="_checkboxRef"
+                   class="form-check-input" type="checkbox"
                    checked="@Node.IsSelected"
                    @onchange="OnCheckedChange" />
 
@@ -42,7 +44,7 @@
     {
         @foreach (var child in Node.Children)
         {
-            <FolderTreeNode Node="child" OnChanged="OnChanged" />
+            <FolderTreeNode Node="child" OnChanged="OnChildChanged" />
         }
     }
 </div>
@@ -51,13 +53,38 @@
     [Parameter, EditorRequired] public FolderNode Node { get; set; } = default!;
     [Parameter] public EventCallback OnChanged { get; set; }
 
+    private ElementReference _checkboxRef;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        await UpdateIndeterminateAsync();
+    }
+
     private void ToggleExpand() => Node.IsExpanded = !Node.IsExpanded;
 
     private async Task OnCheckedChange(ChangeEventArgs e)
     {
-        var selected = (bool)(e.Value ?? false);
-        foreach (var node in Node.Flatten())
-            node.IsSelected = selected;
+        // 이 노드만 선택 상태 변경 — 하위에는 영향 없음
+        Node.IsSelected = (bool)(e.Value ?? false);
         await OnChanged.InvokeAsync();
+    }
+
+    private async Task OnChildChanged()
+    {
+        // 하위 변경 시 부모로 전파
+        await OnChanged.InvokeAsync();
+    }
+
+    private async Task UpdateIndeterminateAsync()
+    {
+        if (Node.Children.Count == 0) return;
+
+        // 자신은 미선택이지만 하위 어딘가에 선택된 노드가 있으면 indeterminate
+        var anyDescendantSelected = Node.Children
+            .SelectMany(c => c.Flatten())
+            .Any(n => n.IsSelected);
+        var indeterminate = !Node.IsSelected && anyDescendantSelected;
+
+        await JS.InvokeVoidAsync("setCheckboxIndeterminate", _checkboxRef, indeterminate);
     }
 }

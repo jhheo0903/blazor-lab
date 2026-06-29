@@ -11,7 +11,7 @@ public class FolderNode
     public string Name { get; init; } = string.Empty;
     public string RelativePath { get; init; } = string.Empty;  // 루트 기준 상대 경로
     public int Depth { get; init; }
-    public bool IsSelected { get; set; } = true;
+    public bool IsSelected { get; set; }
     public bool IsExpanded { get; set; }
     public bool IsNewInDeploy { get; init; }
     public bool IsOnlyInProduction { get; init; }
