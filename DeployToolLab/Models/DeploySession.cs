@@ -2,7 +2,10 @@ using System.Collections.Concurrent;
 
 namespace DeployTool.Models;
 
-public record ScanProgress(string CurrentFile, int FilesScanned, int TotalFiles, List<FileChangeItem> PartialResults);
+// 진행률 보고마다 결과 목록 전체를 복사하지 않도록 집계값만 전달
+public record ScanProgress(
+    string CurrentFile, int FilesScanned, int TotalFiles,
+    int AddedCount, int DeletedCount, int ModifiedCount);
 
 public enum DeployStep
 {
@@ -27,6 +30,9 @@ public class DeploySession
 
     public string? BackupPath { get; set; }
     public DateTime? BackupCreatedAt { get; set; }
+
+    // 사용자가 백업 없이 배포를 진행하기로 선택함 (롤백 불가)
+    public bool IsBackupSkipped { get; set; }
 
     public ConcurrentBag<DeployLogEntry> DeployLog { get; set; } = [];
     public bool IsDeploying { get; set; }

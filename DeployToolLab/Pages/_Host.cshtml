@@ -27,13 +27,25 @@
 <body>
     <component type="typeof(App)" render-mode="ServerPrerendered" />
 
-    @* Reconnect overlay — shown by Blazor when SignalR drops *@
-    <div id="components-reconnect-modal" style="
-        display:none;
-        position:fixed;inset:0;z-index:99999;
-        background:rgba(0,0,0,.6);
-        backdrop-filter:blur(3px);
-        align-items:center;justify-content:center;">
+    @* Reconnect overlay — Blazor 기본 재연결 핸들러가 아래 CSS 클래스를 토글한다.
+       components-reconnect-show / -failed / -rejected *@
+    <style>
+        #components-reconnect-modal {
+            display: none;
+            position: fixed; inset: 0; z-index: 99999;
+            background: rgba(0,0,0,.6);
+            backdrop-filter: blur(3px);
+            align-items: center; justify-content: center;
+        }
+        #components-reconnect-modal.components-reconnect-show,
+        #components-reconnect-modal.components-reconnect-failed,
+        #components-reconnect-modal.components-reconnect-rejected { display: flex; }
+        #components-reconnect-modal .reconnect-panel { display: none; }
+        #components-reconnect-modal.components-reconnect-show #reconnect-status,
+        #components-reconnect-modal.components-reconnect-failed #reconnect-failed,
+        #components-reconnect-modal.components-reconnect-rejected #reconnect-rejected { display: block; }
+    </style>
+    <div id="components-reconnect-modal">
         <div style="
             background:#1a1d23;
             border:1px solid rgba(255,255,255,.1);
@@ -43,23 +55,26 @@
             min-width:280px;
             font-family:'Inter',system-ui,sans-serif;
             color:#e8eaf0;">
-            <div id="reconnect-status">
+            <div id="reconnect-status" class="reconnect-panel">
                 <div class="spinner-border mb-3" style="color:#4d94ff;width:28px;height:28px;"></div>
                 <div style="font-size:14px;font-weight:600;margin-bottom:6px;">서버 재연결 중...</div>
-                <div style="font-size:12px;color:#9399a6;">잠시 기다려 주세요.</div>
+                <div style="font-size:12px;color:#9399a6;">
+                    잠시 기다려 주세요. (시도 <span id="components-reconnect-current-attempt"></span>
+                    / <span id="components-reconnect-max-retries"></span>)
+                </div>
             </div>
-            <div id="reconnect-failed" style="display:none;">
+            <div id="reconnect-failed" class="reconnect-panel">
                 <i class="bi bi-wifi-off" style="font-size:32px;color:#ff5f57;display:block;margin-bottom:12px;"></i>
                 <div style="font-size:14px;font-weight:600;margin-bottom:6px;">연결이 끊어졌습니다</div>
                 <div style="font-size:12px;color:#9399a6;margin-bottom:16px;">서버와의 연결을 복구하지 못했습니다.</div>
-                <button onclick="location.reload()" style="
+                <button onclick="retryReconnect()" style="
                     background:#4d94ff;border:none;color:#fff;
                     border-radius:6px;padding:8px 20px;
                     font-size:13px;font-weight:600;cursor:pointer;">
-                    페이지 새로고침
+                    다시 연결
                 </button>
             </div>
-            <div id="reconnect-rejected" style="display:none;">
+            <div id="reconnect-rejected" class="reconnect-panel">
                 <i class="bi bi-x-circle" style="font-size:32px;color:#ff5f57;display:block;margin-bottom:12px;"></i>
                 <div style="font-size:14px;font-weight:600;margin-bottom:6px;">세션이 만료되었습니다</div>
                 <div style="font-size:12px;color:#9399a6;margin-bottom:16px;">서버 세션이 더 이상 유효하지 않습니다.</div>
@@ -92,31 +107,39 @@
         }
     </script>
     <script>
+        // 재연결 실패 상태에서 수동/자동 재시도 — 회로가 이미 사라졌으면 새로고침
+        async function retryReconnect() {
+            try {
+                if (!(await Blazor.reconnect())) location.reload();
+            } catch {
+                location.reload();
+            }
+        }
+
+        // 백그라운드 탭에서 재연결이 모두 실패한 뒤 사용자가 탭으로 돌아오면 즉시 재시도
+        document.addEventListener('visibilitychange', () => {
+            const modal = document.getElementById('components-reconnect-modal');
+            if (document.visibilityState === 'visible' &&
+                modal.classList.contains('components-reconnect-failed')) {
+                retryReconnect();
+            }
+        });
+
+        // 주의: reconnectionHandler를 직접 지정하면 기본 재연결 로직이 대체되어 재연결을 시도하지 않는다.
+        // 기본 핸들러를 사용하고 UI는 #components-reconnect-modal의 CSS 클래스로 제어한다.
         Blazor.start({
+            configureSignalR: builder => {
+                // 서버 KeepAliveInterval(15s)과 일치, ServerTimeout은 그 2배 이상
+                builder.withServerTimeout(60000).withKeepAliveInterval(15000);
+            },
             reconnectionOptions: {
-                // 재연결 시도: 0s, 2s, 10s, 30s, 60s 간격으로 최대 20회
+                // 재연결 시도: 즉시 → 2s(2회) → 10s(5회) → 이후 30s 간격, 최대 20회
                 maxRetries: 20,
                 retryIntervalMilliseconds: (previousAttempts, maxRetries) => {
                     if (previousAttempts === 0) return 0;
                     if (previousAttempts < 3)  return 2000;
                     if (previousAttempts < 8)  return 10000;
                     return 30000;
-                }
-            },
-            reconnectionHandler: {
-                onConnectionDown: (options, error) => {
-                    const modal = document.getElementById('components-reconnect-modal');
-                    modal.style.display = 'flex';
-                    document.getElementById('reconnect-status').style.display = 'block';
-                    document.getElementById('reconnect-failed').style.display = 'none';
-                    document.getElementById('reconnect-rejected').style.display = 'none';
-                },
-                onConnectionUp: () => {
-                    document.getElementById('components-reconnect-modal').style.display = 'none';
-                },
-                onFailedToReconnect: () => {
-                    document.getElementById('reconnect-status').style.display = 'none';
-                    document.getElementById('reconnect-failed').style.display = 'block';
                 }
             }
         });

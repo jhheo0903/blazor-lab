@@ -208,8 +208,9 @@
         {
             _preflightResults = await PreflightChecker.RunChecksAsync(
                 Session.ProductionPath,
-                Session.BackupPath ?? Session.ProductionPath,
-                Session.ApplyItems);
+                Session.IsBackupSkipped ? null : Session.BackupPath ?? Session.ProductionPath,
+                Session.ApplyItems,
+                Session.Changes);
             _preflightDone = true;
         }
         finally

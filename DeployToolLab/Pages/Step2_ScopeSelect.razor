@@ -4,6 +4,8 @@
 @inject DeploySession Session
 @inject FileScanner FileScanner
 @inject NavigationManager Nav
+@inject ILogger<Step2_ScopeSelect> Logger
+@implements IDisposable
 
 <PageTitle>범위 선택 — DeployTool</PageTitle>
 
@@ -133,19 +135,25 @@
             </div>
         </div>
 
-        @if (_partialChanges.Count > 0)
+        @if (_addedCount + _deletedCount + _modifiedCount > 0)
         {
             <div style="font-size:12px;color:var(--c-text-2);">
                 <i class="bi bi-arrow-right-circle me-1" style="color:var(--c-accent);"></i>
                 현재까지 발견:
-                <span style="color:var(--c-green);font-weight:600;">+@_partialChanges.Count(c => c.Status == FileChangeStatus.Added)</span>
-                <span style="color:var(--c-red);font-weight:600;margin-left:6px;">-@_partialChanges.Count(c => c.Status == FileChangeStatus.Deleted)</span>
-                <span style="color:var(--c-yellow);font-weight:600;margin-left:6px;">~@_partialChanges.Count(c => c.Status == FileChangeStatus.Modified)</span>
+                <span style="color:var(--c-green);font-weight:600;">+@_addedCount</span>
+                <span style="color:var(--c-red);font-weight:600;margin-left:6px;">-@_deletedCount</span>
+                <span style="color:var(--c-yellow);font-weight:600;margin-left:6px;">~@_modifiedCount</span>
             </div>
         }
     }
     else
     {
+        @if (_scanError is not null)
+        {
+            <div class="alert alert-danger">
+                <i class="bi bi-exclamation-circle me-2"></i>@_scanError
+            </div>
+        }
         <button class="btn btn-primary" style="align-self:flex-start;min-width:140px;" @onclick="StartScanAsync">
             <i class="bi bi-play-fill"></i>
             <span>분석 시작</span>
@@ -160,9 +168,14 @@
     private string _currentFile = string.Empty;
     private int _filesScanned;
     private int _totalFiles;
-    private int _scanProgressWidth;
-    private List<FileChangeItem> _partialChanges = [];
-    private System.Threading.Timer? _progressTimer;
+    private int _addedCount;
+    private int _deletedCount;
+    private int _modifiedCount;
+    private string? _scanError;
+    private readonly CancellationTokenSource _disposeCts = new();
+
+    private int _scanProgressWidth =>
+        _totalFiles > 0 ? (int)(_filesScanned * 100L / _totalFiles) : 0;
 
     private string _excludePatternsText =>
         string.Join("\n", Session.Scope.ExcludePatterns);
@@ -210,39 +223,52 @@
     private async Task StartScanAsync()
     {
         _isScanning = true;
+        _scanError = null;
+        _currentFile = string.Empty;
         _filesScanned = 0;
         _totalFiles = 0;
-        _scanProgressWidth = 0;
-        _partialChanges = [];
+        _addedCount = 0;
+        _deletedCount = 0;
+        _modifiedCount = 0;
 
-        await Task.Yield();
-
-        _progressTimer = new System.Threading.Timer(_ =>
-        {
-            if (_scanProgressWidth < 92) _scanProgressWidth += 1;
-            InvokeAsync(StateHasChanged);
-        }, null, 400, 200);
-
+        // Progress<T>는 생성 시점의 회로 SynchronizationContext로 콜백을 보낸다
         var progress = new Progress<ScanProgress>(p =>
         {
             _currentFile = p.CurrentFile;
             _filesScanned = p.FilesScanned;
             _totalFiles = p.TotalFiles;
-            _partialChanges = p.PartialResults;
-            InvokeAsync(StateHasChanged);
+            _addedCount = p.AddedCount;
+            _deletedCount = p.DeletedCount;
+            _modifiedCount = p.ModifiedCount;
+            StateHasChanged();
         });
 
         try
         {
             Session.Changes = await FileScanner.ScanChangesAsync(
-                Session.ProductionPath, Session.DeployPath, Session.Scope, progress);
+                Session.ProductionPath, Session.DeployPath, Session.Scope, progress, _disposeCts.Token);
             Session.CurrentStep = DeployStep.Scan;
             Nav.NavigateTo("/deploy/review");
         }
+        catch (OperationCanceledException) when (_disposeCts.IsCancellationRequested)
+        {
+            // 페이지를 떠나 스캔이 취소됨
+        }
+        catch (Exception ex)
+        {
+            // 처리되지 않은 예외는 회로를 종료시켜 '서버 재연결 중' 화면을 유발하므로 여기서 처리한다
+            Logger.LogError(ex, "파일 스캔 실패: {ProductionPath} ↔ {DeployPath}", Session.ProductionPath, Session.DeployPath);
+            _scanError = $"스캔 중 오류가 발생했습니다: {ex.Message}";
+        }
         finally
         {
-            _progressTimer?.Dispose();
             _isScanning = false;
         }
+    }
+
+    public void Dispose()
+    {
+        _disposeCts.Cancel();
+        _disposeCts.Dispose();
     }
 }

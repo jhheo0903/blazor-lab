@@ -6,14 +6,25 @@ public class PreflightChecker(ILogger<PreflightChecker> _logger)
 {
     private const string LOCK_FILE_NAME = ".deploy.lock";
 
+    /// <param name="backupPath">백업을 건너뛴 경우 null — 용량 확인 대신 경고 항목을 추가한다.</param>
+    /// <param name="scannedItems">스캔 결과 전체 — 백업 범위 크기를 디스크 재탐색 없이 계산하는 데 사용한다.</param>
     public async Task<List<PreflightCheckResult>> RunChecksAsync(
-        string productionPath, string backupPath,
-        IEnumerable<FileChangeItem> applyItems)
+        string productionPath, string? backupPath,
+        IEnumerable<FileChangeItem> applyItems,
+        IEnumerable<FileChangeItem> scannedItems)
     {
         var results = new List<PreflightCheckResult>();
 
         results.Add(await CheckWritePermissionAsync(productionPath));
-        results.Add(await CheckBackupDiskSpaceAsync(backupPath, productionPath));
+        results.Add(backupPath is null
+            ? new PreflightCheckResult
+            {
+                CheckName = "백업 확인",
+                IsPassed = false,
+                IsWarning = true,
+                Message = "백업을 건너뛰었습니다. 배포 후 롤백할 수 없습니다."
+            }
+            : CheckBackupDiskSpace(backupPath, scannedItems));
         results.Add(await CheckLockedFilesAsync(applyItems));
         results.Add(CheckSessionLock(productionPath));
 
@@ -45,34 +56,39 @@ public class PreflightChecker(ILogger<PreflightChecker> _logger)
         }
     }
 
-    private static Task<PreflightCheckResult> CheckBackupDiskSpaceAsync(
-        string backupPath, string productionPath)
+    // 백업은 복사본 폴더를 만든 뒤 ZIP으로 압축하므로, 최악의 경우 범위 크기의 약 2배가 일시적으로 필요하다
+    private const double BackupSpaceFactor = 2.0;
+
+    private static PreflightCheckResult CheckBackupDiskSpace(
+        string backupPath, IEnumerable<FileChangeItem> scannedItems)
     {
         try
         {
             var backupDrive = new DriveInfo(Path.GetPathRoot(backupPath) ?? backupPath);
-            var prodSize = GetDirectorySize(productionPath);
+            // 스캔 시 이미 수집한 운영 파일 크기 합계 — 운영 폴더 전체를 다시 탐색하지 않는다
+            var scopeSize = scannedItems.Sum(i => i.ProductionSize ?? 0);
+            var requiredSize = (long)(scopeSize * BackupSpaceFactor);
             var freeSpace = backupDrive.AvailableFreeSpace;
-            var isPassed = freeSpace > prodSize * 1.2;
+            var isPassed = freeSpace > requiredSize;
 
-            return Task.FromResult(new PreflightCheckResult
+            return new PreflightCheckResult
             {
                 CheckName = "백업 디스크 용량 확인",
                 IsPassed = isPassed,
                 IsWarning = !isPassed,
                 Message = isPassed
                     ? $"여유 공간 충분 ({freeSpace / 1024 / 1024}MB 사용 가능)"
-                    : $"디스크 공간 부족 ({freeSpace / 1024 / 1024}MB 사용 가능, {prodSize / 1024 / 1024}MB 필요 예상)"
-            });
+                    : $"디스크 공간 부족 ({freeSpace / 1024 / 1024}MB 사용 가능, {requiredSize / 1024 / 1024}MB 필요 예상)"
+            };
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
         {
-            return Task.FromResult(new PreflightCheckResult
+            return new PreflightCheckResult
             {
                 CheckName = "백업 디스크 용량 확인",
                 IsPassed = false,
                 Message = $"용량 확인 실패: {ex.Message}"
-            });
+            };
         }
     }
 
@@ -161,16 +177,5 @@ public class PreflightChecker(ILogger<PreflightChecker> _logger)
         {
             return false;
         }
-    }
-
-    private static long GetDirectorySize(string path)
-    {
-        try
-        {
-            return new DirectoryInfo(path)
-                .GetFiles("*", SearchOption.AllDirectories)
-                .Sum(f => f.Length);
-        }
-        catch { return 0; }
     }
 }

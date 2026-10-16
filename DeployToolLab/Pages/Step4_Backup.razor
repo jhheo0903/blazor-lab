@@ -12,12 +12,33 @@
         <span class="title-icon"><i class="bi bi-safe2"></i></span>
         백업
     </h1>
-    <p class="page-subtitle">배포 전 운영 폴더를 자동으로 백업합니다. 문제 발생 시 롤백에 사용됩니다.</p>
+    <p class="page-subtitle">배포 전 운영 폴더를 백업하고 ZIP으로 압축합니다. 문제 발생 시 롤백에 사용됩니다.</p>
 </div>
 
 <div style="max-width:520px;display:flex;flex-direction:column;gap:16px;">
 
-    @if (Session.BackupPath is null)
+    @if (Session.BackupPath is null && Session.IsBackupSkipped)
+    {
+        <div class="alert alert-warning" style="display:flex;align-items:flex-start;gap:12px;">
+            <i class="bi bi-exclamation-triangle-fill" style="font-size:18px;flex-shrink:0;margin-top:1px;"></i>
+            <div>
+                <div style="font-weight:700;margin-bottom:4px;">백업 건너뜀</div>
+                <div style="font-size:12px;">백업 없이 배포를 진행합니다. 배포 후 롤백 기능을 사용할 수 없습니다.</div>
+            </div>
+        </div>
+
+        <div style="display:flex;gap:10px;">
+            <button class="btn btn-primary" style="min-width:160px;" @onclick="GoToExecute">
+                <i class="bi bi-arrow-right-circle"></i>
+                Step 5: 배포 실행
+            </button>
+            <button class="btn btn-outline-secondary" @onclick="CancelSkip">
+                <i class="bi bi-arrow-counterclockwise"></i>
+                백업하기로 변경
+            </button>
+        </div>
+    }
+    else if (Session.BackupPath is null)
     {
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
             <div class="stat-block">
@@ -28,7 +49,7 @@
             <div class="stat-block">
                 <div class="stat-block-label">백업 위치</div>
                 <div style="font-size:11.5px;font-family:var(--mono);color:var(--c-text-2);word-break:break-all;margin-top:4px;">
-                    \Backup\backup_[timestamp]
+                    \Backup\backup_[timestamp].zip
                 </div>
             </div>
         </div>
@@ -68,6 +89,35 @@
                 <span>백업 시작</span>
             }
         </button>
+
+        @* 백업 건너뛰기 — 롤백이 불가능해지므로 인라인 확인을 한 번 거친다 *@
+        @if (_isConfirmingSkip)
+        {
+            <div class="alert alert-warning" style="margin:0;">
+                <div style="font-weight:600;margin-bottom:6px;">
+                    <i class="bi bi-exclamation-triangle me-1"></i>백업 없이 진행하시겠습니까?
+                </div>
+                <div style="font-size:12px;margin-bottom:10px;">
+                    백업을 건너뛰면 배포 후 롤백(백업으로 복원)을 사용할 수 없습니다.
+                </div>
+                <div style="display:flex;gap:8px;">
+                    <button class="btn btn-warning btn-sm" @onclick="SkipBackup">
+                        건너뛰고 배포 단계로
+                    </button>
+                    <button class="btn btn-outline-secondary btn-sm" @onclick="() => _isConfirmingSkip = false">
+                        취소
+                    </button>
+                </div>
+            </div>
+        }
+        else
+        {
+            <button class="btn btn-link btn-sm" style="align-self:flex-start;padding-left:0;"
+                    @onclick="() => _isConfirmingSkip = true" disabled="@_isBackingUp">
+                <i class="bi bi-skip-forward"></i>
+                백업 건너뛰기
+            </button>
+        }
     }
     else
     {
@@ -90,6 +140,7 @@
 
 @code {
     private bool _isBackingUp;
+    private bool _isConfirmingSkip;
     private string _backupStatus = string.Empty;
     private string? _errorMessage;
     private int _progressWidth = 0;
@@ -118,6 +169,7 @@
             Session.BackupPath = await BackupService.CreateBackupAsync(
                 Session.ProductionPath, Session.Scope, progress);
             Session.BackupCreatedAt = DateTime.Now;
+            Session.IsBackupSkipped = false;
             Session.CurrentStep = DeployStep.Backup;
             _progressWidth = 100;
         }
@@ -131,6 +183,16 @@
             _isBackingUp = false;
         }
     }
+
+    private void SkipBackup()
+    {
+        _isConfirmingSkip = false;
+        Session.IsBackupSkipped = true;
+        Session.CurrentStep = DeployStep.Backup;
+        Nav.NavigateTo("/deploy/execute");
+    }
+
+    private void CancelSkip() => Session.IsBackupSkipped = false;
 
     private void GoToExecute() => Nav.NavigateTo("/deploy/execute");
 }
