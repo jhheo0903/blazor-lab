@@ -2,6 +2,9 @@ using DeployTool.Models;
 
 namespace DeployTool.Components;
 
+// 트리 체크박스 토글 — Items 전체를 Apply(true) 또는 Skip(false)으로 지정
+public record DecisionToggle(IReadOnlyList<FileChangeItem> Items, bool Apply);
+
 public class FileTreeNodeModel
 {
     public FileChangeItem? Item { get; init; }
@@ -16,7 +19,7 @@ public class FileTreeNodeModel
         (Item is not null && IsEditableExtension(Item.RelativePath)) ||
         Children.Any(c => c.HasEditableFiles);
 
-    private static bool IsEditableExtension(string path) =>
+    public static bool IsEditableExtension(string path) =>
         Path.GetExtension(path).ToLowerInvariant() switch
         {
             ".json" or ".config" or ".xml" or ".ini" or ".yaml" or ".yml"

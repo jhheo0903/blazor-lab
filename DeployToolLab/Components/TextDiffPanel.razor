@@ -118,9 +118,8 @@
         _isDirty   = false;
         _savedOk   = false;
         _saveError = null;
+        // 편집 내용만 폐기 — 적용/스킵 결정은 트리 체크박스 상태를 유지
         Item.MergedJsonContent = null;
-        if (Item.Decision == DeployDecisionValue.Apply)
-            Item.Decision = DeployDecisionValue.Pending;
         await JS.InvokeVoidAsync("monacoEditor.setValue", _editorId, DeployText);
         await OnDecisionChanged.InvokeAsync();
     }

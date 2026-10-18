@@ -43,6 +43,9 @@ public class FileChangeItem
 
     public string? LinkedPdbPath { get; set; }
 
+    // 스킵 규칙(DeployConfig.SkipPatterns)에 매칭된 경우 해당 패턴
+    public string? SkipRule { get; set; }
+
     // When non-null, DeployExecutor writes this merged content instead of copying the deploy file
     public string? MergedJsonContent { get; set; }
 

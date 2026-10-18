@@ -1003,6 +1003,41 @@ div[style*="grid-column:1"].sbs-row { border-right: 1px solid var(--c-border); }
 
 .tree-node { user-select: none; }
 
+/* 잡기 영역은 넓게(10px), 보이는 막대는 가운데 얇게 표시 */
+.tree-splitter {
+  width: 10px;
+  margin: 0 -5px; /* tree-pane 오른쪽 테두리를 중심으로 양쪽에 걸치도록 */
+  flex-shrink: 0;
+  cursor: col-resize;
+  position: relative;
+  z-index: 1;
+}
+.tree-splitter::before {
+  /* 항상 보이는 손잡이 표시 */
+  content: "";
+  position: absolute;
+  top: 50%; left: 50%;
+  width: 4px; height: 32px;
+  transform: translate(-50%, -50%);
+  border-radius: 2px;
+  background: var(--c-border);
+  transition: background .1s, height .1s;
+}
+.tree-splitter::after {
+  content: "";
+  position: absolute;
+  top: 0; bottom: 0; left: 50%;
+  width: 3px;
+  transform: translateX(-50%);
+  background: transparent;
+  transition: background .1s;
+}
+.tree-splitter:hover::after,
+.tree-splitter.dragging::after { background: var(--c-accent); }
+.tree-splitter:hover::before,
+.tree-splitter.dragging::before { background: var(--c-accent); height: 48px; }
+body.is-resizing { cursor: col-resize; user-select: none; }
+
 .tree-row {
   display: flex;
   align-items: center;
@@ -1032,6 +1067,18 @@ div[style*="grid-column:1"].sbs-row { border-right: 1px solid var(--c-border); }
 }
 
 .tree-badges { display: flex; gap: 3px; flex-shrink: 0; }
+.tree-check {
+  width: 14px;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+  font-size: 13px;
+  color: var(--c-text-3);
+  cursor: pointer;
+}
+.tree-check:hover { color: var(--c-text-1); }
+.tree-check.on { color: var(--c-accent); }
+.tree-row.is-skipped .tree-label { opacity: .5; }
+.badge-rule { color: var(--c-text-3); font-size: 10px; }
 .tree-toggle {
   width: 14px; height: 14px;
   display: flex; align-items: center; justify-content: center;

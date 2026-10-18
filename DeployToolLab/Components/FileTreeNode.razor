@@ -3,7 +3,7 @@
 @if (_isVisible)
 {
 <div class="tree-node @(IsSelected ? "selected" : "")">
-    <div class="tree-row" @onclick="Select">
+    <div class="tree-row @(_isSkipped ? "is-skipped" : "")" @onclick="Select">
         <span class="tree-toggle" @onclick:stopPropagation="true" @onclick="ToggleExpand">
             @if (_hasChildren)
             {
@@ -11,8 +11,21 @@
             }
         </span>
 
+        @if (_checkState == CheckState.None)
+        {
+            <span class="tree-check"></span>
+        }
+        else
+        {
+            <span class="tree-check @(_checkState == CheckState.Unchecked ? "" : "on")"
+                  title="@(_checkState == CheckState.Checked ? "체크 해제 시 스킵" : "체크 시 적용")"
+                  @onclick:stopPropagation="true" @onclick="ToggleApply">
+                <i class="bi @_checkIcon"></i>
+            </span>
+        }
+
         <span class="tree-icon">@_icon</span>
-        <span class="tree-label">@_displayName</span>
+        <span class="tree-label" title="@_displayName">@_displayName</span>
 
         <div class="tree-badges">
             @if (_hasChildren)
@@ -23,6 +36,12 @@
             }
             else if (Item is not null)
             {
+                @if (Item.SkipRule is not null && Item.Decision == DeployDecisionValue.Skip)
+                {
+                    <span class="badge badge-rule" title="스킵 규칙: @Item.SkipRule">
+                        <i class="bi bi-funnel-fill"></i>
+                    </span>
+                }
                 <span class="badge @_statusBadgeClass">@Item.StatusIcon</span>
                 @if (Item.IsDowngrade)
                 {
@@ -46,7 +65,8 @@
                     ShowChangesOnly="@ShowChangesOnly"
                     ShowEditableOnly="@ShowEditableOnly"
                     SelectedItem="@SelectedItem"
-                    OnSelect="@OnSelect" />
+                    OnSelect="@OnSelect"
+                    OnToggleApply="@OnToggleApply" />
             }
         </div>
     }
@@ -60,6 +80,7 @@
     [Parameter] public bool ShowChangesOnly { get; set; }
     [Parameter] public bool ShowEditableOnly { get; set; }
     [Parameter] public EventCallback<FileChangeItem?> OnSelect { get; set; }
+    [Parameter] public EventCallback<DecisionToggle> OnToggleApply { get; set; }
     [Parameter] public FileChangeItem? SelectedItem { get; set; }
     [Parameter] public int Depth { get; set; }
 
@@ -76,6 +97,17 @@
     private int _deletedCount;
     private int _modifiedCount;
     private List<FileTreeNodeModel> _visibleChildren = [];
+
+    private enum CheckState { None, Unchecked, Partial, Checked }
+    private CheckState _checkState;
+    private bool _isSkipped;
+
+    private string _checkIcon => _checkState switch
+    {
+        CheckState.Checked => "bi-check-square-fill",
+        CheckState.Partial => "bi-dash-square-fill",
+        _                  => "bi-square"
+    };
 
     private bool IsSelected => SelectedItem is not null && SelectedItem == Item;
 
@@ -108,9 +140,21 @@
         if (_hasChildren)
         {
             // Cache descendant counts — computed once per parameter change
-            _addedCount   = CountDescendants(Children, FileChangeStatus.Added);
-            _deletedCount = CountDescendants(Children, FileChangeStatus.Deleted);
-            _modifiedCount = CountDescendants(Children, FileChangeStatus.Modified);
+            _addedCount = _deletedCount = _modifiedCount = 0;
+            int decidable = 0, applied = 0;
+            TallyDescendants(Children, ref decidable, ref applied);
+            _checkState = decidable == 0 ? CheckState.None
+                : applied == 0 ? CheckState.Unchecked
+                : applied == decidable ? CheckState.Checked
+                : CheckState.Partial;
+            _isSkipped = false;
+        }
+        else
+        {
+            _checkState = Item is null || Item.Status == FileChangeStatus.Identical ? CheckState.None
+                : Item.Decision == DeployDecisionValue.Apply ? CheckState.Checked
+                : CheckState.Unchecked;
+            _isSkipped = Item?.Decision == DeployDecisionValue.Skip;
         }
 
         RefreshVisibleChildren();
@@ -146,14 +190,33 @@
     }
 
     private static bool IsEditableExtension(string path) =>
-        Path.GetExtension(path).ToLowerInvariant() switch
+        FileTreeNodeModel.IsEditableExtension(path);
+
+    // 체크박스 대상: 변경된 파일 중 현재 필터("설정 파일만")에 보이는 것
+    private bool IsDecidable(FileChangeItem item) =>
+        item.Status != FileChangeStatus.Identical &&
+        (!ShowEditableOnly || IsEditableExtension(item.RelativePath));
+
+    private void ToggleApply()
+    {
+        if (_checkState == CheckState.None) return;
+
+        List<FileChangeItem> items = [];
+        if (_hasChildren) CollectDecidable(Children, items);
+        else if (Item is not null) items.Add(Item);
+
+        // 완전히 체크된 상태면 전부 스킵, 그 외(미체크/부분)는 전부 적용
+        OnToggleApply.InvokeAsync(new DecisionToggle(items, _checkState != CheckState.Checked));
+    }
+
+    private void CollectDecidable(List<FileTreeNodeModel> nodes, List<FileChangeItem> result)
+    {
+        foreach (var node in nodes)
         {
-            ".json" or ".config" or ".xml" or ".ini" or ".yaml" or ".yml"
-                or ".txt" or ".cs" or ".js" or ".ts" or ".html" or ".cshtml"
-                or ".razor" or ".sql" or ".css" or ".md" or ".bat" or ".ps1"
-                or ".sh" or ".properties" or ".env" => true,
-            _ => false
-        };
+            if (node.Item is { } item && IsDecidable(item)) result.Add(item);
+            if (node.Children.Count > 0) CollectDecidable(node.Children, result);
+        }
+    }
 
     private void RefreshVisibleChildren()
     {
@@ -197,15 +260,27 @@
         _                         => "badge-same"
     };
 
-    private static int CountDescendants(List<FileTreeNodeModel> nodes, FileChangeStatus status)
+    // 상태별 개수와 체크박스 집계를 한 번의 순회로 계산
+    private void TallyDescendants(List<FileTreeNodeModel> nodes, ref int decidable, ref int applied)
     {
-        var count = 0;
         foreach (var node in nodes)
         {
-            if (node.Item?.Status == status) count++;
+            if (node.Item is { } item)
+            {
+                switch (item.Status)
+                {
+                    case FileChangeStatus.Added:    _addedCount++; break;
+                    case FileChangeStatus.Deleted:  _deletedCount++; break;
+                    case FileChangeStatus.Modified: _modifiedCount++; break;
+                }
+                if (IsDecidable(item))
+                {
+                    decidable++;
+                    if (item.Decision == DeployDecisionValue.Apply) applied++;
+                }
+            }
             if (node.Children.Count > 0)
-                count += CountDescendants(node.Children, status);
+                TallyDescendants(node.Children, ref decidable, ref applied);
         }
-        return count;
     }
 }

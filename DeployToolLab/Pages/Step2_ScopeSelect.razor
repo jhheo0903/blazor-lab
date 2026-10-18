@@ -3,6 +3,7 @@
 @using DeployTool.Services
 @inject DeploySession Session
 @inject FileScanner FileScanner
+@inject DeployConfigService ConfigService
 @inject NavigationManager Nav
 @inject ILogger<Step2_ScopeSelect> Logger
 @implements IDisposable
@@ -245,8 +246,11 @@
 
         try
         {
-            Session.Changes = await FileScanner.ScanChangesAsync(
+            var changes = await FileScanner.ScanChangesAsync(
                 Session.ProductionPath, Session.DeployPath, Session.Scope, progress, _disposeCts.Token);
+            var config = await ConfigService.LoadAsync();
+            SkipRuleMatcher.Apply(changes, config.SkipPatterns);
+            Session.Changes = changes;
             Session.CurrentStep = DeployStep.Scan;
             Nav.NavigateTo("/deploy/review");
         }

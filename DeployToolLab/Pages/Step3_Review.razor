@@ -5,7 +5,9 @@
 @inject DeploySession Session
 @inject DiffEngine DiffEngine
 @inject FileScanner FileScanner
+@inject DeployConfigService ConfigService
 @inject NavigationManager Nav
+@inject IJSRuntime JS
 
 <PageTitle>변경 검토 — DeployTool</PageTitle>
 
@@ -35,8 +37,16 @@
         </div>
         <div class="stat-chip">
             <span class="stat-count">@_applyCount</span>
-            <span>결정됨</span>
+            <span>적용</span>
         </div>
+        @if (_ruleSkipCount > 0)
+        {
+            <div class="stat-chip" title="@($"스킵 규칙에 의해 스킵된 파일 (설정: {ConfigService.ConfigFilePath} 의 skipPatterns)")">
+                <i class="bi bi-funnel-fill" style="font-size:11px;"></i>
+                <span class="stat-count">@_ruleSkipCount</span>
+                <span>규칙 스킵</span>
+            </div>
+        }
     </div>
 
     <div class="toolbar-spacer"></div>
@@ -55,12 +65,19 @@
     </button>
 
     <div style="display:flex;gap:6px;margin-left:4px;">
-        <button class="btn btn-outline-secondary btn-sm" @onclick="SelectAllApply">
-            <i class="bi bi-check2-all"></i> 전체 적용
-        </button>
-        <button class="btn btn-outline-secondary btn-sm" @onclick="SelectAllSkip">
-            <i class="bi bi-skip-forward"></i> 전체 스킵
-        </button>
+        @if (_isAllApplied)
+        {
+            <button class="btn btn-outline-secondary btn-sm" @onclick="SelectAllSkip">
+                <i class="bi bi-skip-forward"></i> 전체 스킵
+            </button>
+        }
+        else
+        {
+            <button class="btn btn-outline-secondary btn-sm" @onclick="SelectAllApply"
+                    title="스킵 규칙에 해당하는 파일은 제외하고 전체 적용합니다">
+                <i class="bi bi-check2-all"></i> 전체 적용
+            </button>
+        }
         <button class="btn btn-outline-secondary btn-sm" @onclick="RescanAsync" disabled="@_isRescanning"
                 title="로컬 파일 변경사항을 반영해 목록을 다시 불러옵니다">
             @if (_isRescanning)
@@ -77,7 +94,7 @@
 </div>
 
 <div style="display:flex;height:calc(100vh - 240px);border:1px solid var(--c-border);border-top:none;border-radius:0 0 var(--r) var(--r);overflow:hidden;">
-    <div class="tree-pane" style="width:280px;min-width:280px;">
+    <div class="tree-pane" style="width:280px;flex-shrink:0;">
         @foreach (var node in _treeNodes)
         {
             <FileTreeNode @key="node"
@@ -88,9 +105,11 @@
                 ShowChangesOnly="@_showChangesOnly"
                 ShowEditableOnly="@_showEditableOnly"
                 SelectedItem="@_selectedItem"
-                OnSelect="@OnItemSelected" />
+                OnSelect="@OnItemSelected"
+                OnToggleApply="@OnToggleApply" />
         }
     </div>
+    <div class="tree-splitter" title="드래그해서 너비 조절 · 더블클릭 시 기본 너비"></div>
 
     <div class="detail-pane" style="flex:1;padding:0;overflow:hidden;display:flex;flex-direction:column;">
         @if (_selectedItem is null)
@@ -147,12 +166,31 @@
     private int _deletedCount;
     private int _modifiedCount;
     private int _applyCount;
+    private int _ruleSkipCount;
+    private bool _isAllApplied;
+
+    // DLL ↔ PDB 세트 처리를 위한 경로 조회용
+    private Dictionary<string, FileChangeItem> _itemsByPath = new(StringComparer.OrdinalIgnoreCase);
 
     protected override void OnInitialized()
     {
         // BuildTree is O(N) now; run synchronously — no await needed
-        _treeNodes = FileTreeNodeModel.BuildTree(Session.Changes);
+        RebuildTree();
         RefreshCounts();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        // 저장된 트리 영역 너비 복원
+        if (firstRender)
+            await JS.InvokeVoidAsync("treeSplitter.restore");
+    }
+
+    private void RebuildTree()
+    {
+        _treeNodes = FileTreeNodeModel.BuildTree(Session.Changes);
+        _itemsByPath = Session.Changes.ToDictionary(
+            c => c.RelativePath, StringComparer.OrdinalIgnoreCase);
     }
 
     private void RefreshCounts()
@@ -160,13 +198,45 @@
         _addedCount   = Session.Changes.Count(c => c.Status == FileChangeStatus.Added);
         _deletedCount = Session.Changes.Count(c => c.Status == FileChangeStatus.Deleted);
         _modifiedCount = Session.Changes.Count(c => c.Status == FileChangeStatus.Modified);
-        _applyCount   = Session.Changes.Count(c => c.Decision == DeployDecisionValue.Apply);
+        RefreshDecisionCounts();
+    }
+
+    private void RefreshDecisionCounts()
+    {
+        _applyCount    = Session.Changes.Count(c => c.Decision == DeployDecisionValue.Apply);
+        _ruleSkipCount = Session.Changes.Count(c => c.SkipRule is not null && c.Decision == DeployDecisionValue.Skip);
+
+        // 규칙 대상을 제외한 변경 파일이 모두 적용 상태면 토글 버튼은 "전체 스킵"으로 표시
+        var targets = Session.ChangedItems.Where(c => c.SkipRule is null).ToList();
+        _isAllApplied = targets.Count > 0 && targets.All(c => c.Decision == DeployDecisionValue.Apply);
     }
 
     private void OnDecisionChanged()
     {
-        _applyCount = Session.Changes.Count(c => c.Decision == DeployDecisionValue.Apply);
+        if (_selectedItem is not null)
+            SyncLinkedPdb(_selectedItem);
+        RefreshDecisionCounts();
         StateHasChanged();
+    }
+
+    private void OnToggleApply(DecisionToggle toggle)
+    {
+        var decision = toggle.Apply ? DeployDecisionValue.Apply : DeployDecisionValue.Skip;
+        foreach (var item in toggle.Items)
+        {
+            item.Decision = decision;
+            SyncLinkedPdb(item);
+        }
+        RefreshDecisionCounts();
+    }
+
+    // DLL의 결정을 같은 이름의 PDB에 그대로 반영
+    private void SyncLinkedPdb(FileChangeItem item)
+    {
+        if (item.LinkedPdbPath is not null &&
+            _itemsByPath.TryGetValue(item.LinkedPdbPath, out var pdb) &&
+            pdb.Status != FileChangeStatus.Identical)
+            pdb.Decision = item.Decision;
     }
 
     private void OnToggleChangesOnly() { /* bind:after triggers re-render automatically */ }
@@ -185,16 +255,17 @@
 
     private void SelectAllApply()
     {
+        // 스킵 규칙 대상은 유지 — 필요하면 트리 체크박스로 개별 적용
         foreach (var item in Session.ChangedItems)
-            item.Decision = DeployDecisionValue.Apply;
-        RefreshCounts();
+            item.Decision = item.SkipRule is null ? DeployDecisionValue.Apply : DeployDecisionValue.Skip;
+        RefreshDecisionCounts();
     }
 
     private void SelectAllSkip()
     {
         foreach (var item in Session.ChangedItems)
             item.Decision = DeployDecisionValue.Skip;
-        RefreshCounts();
+        RefreshDecisionCounts();
     }
 
     private async Task RescanAsync()
@@ -207,10 +278,17 @@
             // 기존 결정(Decision) 보존을 위해 RelativePath → Decision 매핑 저장
             var previousDecisions = Session.Changes
                 .Where(c => c.Decision != DeployDecisionValue.Pending)
+                // 규칙에 의한 스킵은 저장하지 않음 — 재스캔 시 최신 규칙으로 다시 판정
+                .Where(c => !(c.SkipRule is not null && c.Decision == DeployDecisionValue.Skip))
                 .ToDictionary(c => c.RelativePath, c => c.Decision, StringComparer.OrdinalIgnoreCase);
 
             var newChanges = await FileScanner.ScanChangesAsync(
                 Session.ProductionPath, Session.DeployPath, Session.Scope);
+
+            // 스킵 규칙을 먼저 적용한 뒤 이전 결정으로 덮어써 사용자 선택을 우선한다
+            ConfigService.Reload();
+            var config = await ConfigService.LoadAsync();
+            SkipRuleMatcher.Apply(newChanges, config.SkipPatterns);
 
             // 이전 결정 복원
             foreach (var item in newChanges)
@@ -227,7 +305,7 @@
                 : newChanges.FirstOrDefault(c =>
                     c.RelativePath.Equals(_selectedItem.RelativePath, StringComparison.OrdinalIgnoreCase));
 
-            _treeNodes = FileTreeNodeModel.BuildTree(Session.Changes);
+            RebuildTree();
             RefreshCounts();
 
             // 선택된 파일이 유지됐으면 diff 갱신

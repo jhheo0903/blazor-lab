@@ -5,6 +5,9 @@
   "iisAppPools": [
     "DefaultAppPool"
   ],
+  "skipPatterns": [
+    "appsettings.Development.json"
+  ],
   "postDeployExecutables": [
     {
       "displayName": "DB 마이그레이션",
