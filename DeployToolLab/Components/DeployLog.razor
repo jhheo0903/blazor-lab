@@ -3,7 +3,8 @@
 @implements IAsyncDisposable
 
 <div class="deploy-log" @ref="_logContainer">
-    @foreach (var entry in Entries.OrderBy(e => e.Timestamp))
+    @* 최신 로그를 맨 위에 표시 — 스크롤하지 않아도 새 로그가 바로 보인다 *@
+    @foreach (var entry in Entries.OrderByDescending(e => e.Timestamp))
     {
         <div class="log-line @GetLineClass(entry)">
             <span class="log-time">[@entry.Timestamp.ToString("HH:mm:ss")]</span>
@@ -51,5 +52,4 @@
             await _hubConnection.DisposeAsync();
     }
 
-    [Inject] private NavigationManager NavigationManager { get; set; } = default!;
-}
+    [Inject] private NavigationManager NavigationManager { get; set; } = default!;}

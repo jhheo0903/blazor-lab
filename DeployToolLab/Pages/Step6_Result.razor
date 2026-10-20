@@ -192,9 +192,10 @@
 
     protected override async Task OnInitializedAsync()
     {
-        _errorLogs = Session.DeployLog.Where(l => l.IsError).ToList();
-        _errorCount = _errorLogs.Count;
-        _successCount = Session.ApplyItems.Count() - _errorCount;
+        _errorLogs = Session.DeployLog.Where(l => l.IsError).OrderBy(l => l.Timestamp).ToList();
+        // 실패 = 적용 대상 중 성공하지 못한 항목 (오류·잠김 건너뜀·중단으로 미처리 포함)
+        _successCount = Session.DeploySucceededCount;
+        _errorCount = Session.ApplyItems.Count() - _successCount;
         _config = await ConfigService.LoadAsync();
     }
 
@@ -289,6 +290,7 @@
         Session.BackupPath = null;
         Session.IsBackupSkipped = false;
         Session.IsDeployDone = false;
+        Session.DeploySucceededCount = 0;
         Session.SelectedServices.Clear();
         Session.SelectedAppPools.Clear();
         Session.StoppedServices.Clear();

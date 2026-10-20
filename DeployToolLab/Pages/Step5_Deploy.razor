@@ -8,6 +8,7 @@
 @inject WindowsServiceManager ServiceManager
 @inject IisPoolManager PoolManager
 @inject NavigationManager Nav
+@implements IDisposable
 
 <PageTitle>배포 실행 — DeployTool</PageTitle>
 
@@ -34,7 +35,8 @@
             {
                 <i class="bi bi-shield" style="font-size:40px;color:var(--c-text-3);"></i>
                 <div style="font-size:13.5px;color:var(--c-text-2);">
-                    배포 전 쓰기 권한, 디스크 용량, 파일 잠금 여부를 확인합니다.
+                    배포 전 쓰기 권한, 디스크 용량, 동시 배포 여부를 확인합니다.<br />
+                    <span style="font-size:12px;color:var(--c-text-3);">잠긴 파일은 배포 중에 감지되면 일시중지 후 선택할 수 있습니다.</span>
                 </div>
                 <button class="btn btn-outline-primary" @onclick="RunPreflightAsync">
                     <i class="bi bi-play-circle"></i>검사 실행
@@ -118,6 +120,51 @@
                 </div>
             }
 
+            @* 잠긴 파일로 일시중지 *@
+            @if (Session.Pause is { } pause)
+            {
+                <div class="alert alert-warning" style="margin:0;">
+                    <div style="font-weight:700;margin-bottom:8px;">
+                        <i class="bi bi-pause-circle-fill me-1"></i>배포 일시중지 (@pause.Index / @pause.Total)
+                    </div>
+
+                    <div style="font-size:12px;margin-bottom:2px;">잠긴 파일</div>
+                    <div style="font-family:var(--mono);font-size:12px;word-break:break-all;margin-bottom:8px;">@pause.LockedFilePath</div>
+
+                    <div style="font-size:12px;margin-bottom:2px;">사용 중인 프로세스</div>
+                    @if (pause.LockingProcesses.Count == 0)
+                    {
+                        <div style="font-size:12px;opacity:.8;margin-bottom:8px;">확인할 수 없음 (권한 부족 또는 이미 해제됨)</div>
+                    }
+                    else
+                    {
+                        <div style="margin-bottom:8px;">
+                            @foreach (var process in pause.LockingProcesses)
+                            {
+                                <div style="font-family:var(--mono);font-size:12px;">• @process</div>
+                            }
+                        </div>
+                    }
+
+                    <div style="font-size:11.5px;opacity:.85;margin-bottom:10px;">
+                        프로세스를 종료하거나 서비스를 중지한 뒤 [다시 시도]를 누르면 이 파일부터 이어서 진행합니다.<br />
+                        @(pause.Deadline.ToString("HH:mm")) 까지 응답이 없으면 배포가 중단됩니다.
+                    </div>
+
+                    <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                        <button class="btn btn-primary btn-sm" @onclick="() => pause.Resolve(LockedFileAction.Retry)">
+                            <i class="bi bi-arrow-repeat"></i> 다시 시도
+                        </button>
+                        <button class="btn btn-outline-secondary btn-sm" @onclick="() => pause.Resolve(LockedFileAction.Skip)">
+                            <i class="bi bi-skip-forward"></i> 이 파일 건너뛰기
+                        </button>
+                        <button class="btn btn-outline-danger btn-sm" @onclick="() => pause.Resolve(LockedFileAction.Abort)">
+                            <i class="bi bi-stop-circle"></i> 배포 중단
+                        </button>
+                    </div>
+                </div>
+            }
+
             @* 배포 버튼 *@
             @if (!Session.IsDeployDone)
             {
@@ -136,6 +183,11 @@
                     {
                         <span class="spinner-border spinner-border-sm"></span>
                         <span>서비스 중지 중...</span>
+                    }
+                    else if (Session.Pause is not null)
+                    {
+                        <i class="bi bi-pause-circle"></i>
+                        <span>일시중지됨</span>
                     }
                     else if (Session.IsDeploying)
                     {
@@ -191,6 +243,11 @@
 
     protected override async Task OnInitializedAsync()
     {
+        Session.StateChanged += OnSessionStateChanged;
+
+        // 배포 중(일시중지 포함)에 다른 페이지를 다녀와도 배포 화면과 일시중지 패널이 다시 보이도록 한다
+        _preflightDone = Session.IsDeploying || Session.IsDeployDone;
+
         _config = await ConfigService.LoadAsync();
 
         if (Session.SelectedServices.Count == 0)
@@ -209,7 +266,6 @@
             _preflightResults = await PreflightChecker.RunChecksAsync(
                 Session.ProductionPath,
                 Session.IsBackupSkipped ? null : Session.BackupPath ?? Session.ProductionPath,
-                Session.ApplyItems,
                 Session.Changes);
             _preflightDone = true;
         }
@@ -259,4 +315,8 @@
     }
 
     private void GoToResult() => Nav.NavigateTo("/deploy/result");
+
+    private void OnSessionStateChanged() => _ = InvokeAsync(StateHasChanged);
+
+    public void Dispose() => Session.StateChanged -= OnSessionStateChanged;
 }

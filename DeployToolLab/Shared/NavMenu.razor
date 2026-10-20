@@ -46,7 +46,11 @@
             <NavLink class="nav-link" href="/deploy/execute">
                 <span class="step-pill">5</span>
                 <span class="flex-grow-1">배포 실행</span>
-                @if (Session.IsDeploying)
+                @if (Session.Pause is not null)
+                {
+                    <i class="bi bi-pause-circle-fill" title="잠긴 파일로 일시중지" style="color:var(--yellow);font-size:12px;"></i>
+                }
+                else if (Session.IsDeploying)
                 {
                     <span class="spinner-border spinner-border-sm" style="width:10px;height:10px;border-width:1.5px;"></span>
                 }
@@ -79,6 +83,7 @@
     protected override void OnInitialized()
     {
         Nav.LocationChanged += OnLocationChanged;
+        Session.StateChanged += OnSessionStateChanged;
     }
 
     private void OnLocationChanged(object? sender, LocationChangedEventArgs e)
@@ -86,8 +91,11 @@
         InvokeAsync(StateHasChanged);
     }
 
+    private void OnSessionStateChanged() => _ = InvokeAsync(StateHasChanged);
+
     public void Dispose()
     {
         Nav.LocationChanged -= OnLocationChanged;
+        Session.StateChanged -= OnSessionStateChanged;
     }
 }

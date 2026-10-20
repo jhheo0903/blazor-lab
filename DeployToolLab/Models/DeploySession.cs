@@ -37,6 +37,14 @@ public class DeploySession
     public ConcurrentBag<DeployLogEntry> DeployLog { get; set; } = [];
     public bool IsDeploying { get; set; }
     public bool IsDeployDone { get; set; }
+    public int DeploySucceededCount { get; set; }
+
+    // 잠긴 파일로 일시중지된 경우에만 값이 있음
+    public DeployPauseState? Pause { get; set; }
+
+    // 배포 진행 상태 변경 알림 — 백그라운드에서 변경되므로 구독자는 InvokeAsync로 렌더링해야 한다
+    public event Action? StateChanged;
+    public void NotifyStateChanged() => StateChanged?.Invoke();
 
     public string? SessionLockId { get; set; }
 
