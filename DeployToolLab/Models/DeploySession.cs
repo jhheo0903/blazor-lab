@@ -28,6 +28,9 @@ public class DeploySession
     public ScopeSelection Scope { get; set; } = new();
     public List<FileChangeItem> Changes { get; set; } = [];
 
+    // 배포 경로에만 있는 빈 폴더(상대 경로) — 운영 폴더 구조를 배포 폴더와 맞추기 위해 배포 시 생성
+    public List<string> EmptyDeployOnlyDirectories { get; set; } = [];
+
     public string? BackupPath { get; set; }
     public DateTime? BackupCreatedAt { get; set; }
 

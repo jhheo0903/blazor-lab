@@ -94,7 +94,16 @@
 
                     @if (_config.IisAppPools.Count > 0)
                     {
-                        <div style="font-size:11.5px;font-weight:600;color:var(--c-text-2);margin:10px 0 6px;text-transform:uppercase;letter-spacing:.04em;">IIS 앱 풀</div>
+                        <div style="display:flex;align-items:center;justify-content:space-between;margin:10px 0 6px;">
+                            <div style="font-size:11.5px;font-weight:600;color:var(--c-text-2);text-transform:uppercase;letter-spacing:.04em;">IIS 앱 풀</div>
+                            @* 전체 선택/해제 — 모두 선택돼 있을 때만 체크 표시 *@
+                            <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--c-text-2);cursor:pointer;margin:0;">
+                                <input type="checkbox" class="form-check-input" style="margin:0;"
+                                       checked="@AllPoolsSelected"
+                                       @onchange="e => ToggleAllPools((bool)(e.Value ?? false))" />
+                                전체 선택 (@SelectedPoolCount/@_config.IisAppPools.Count)
+                            </label>
+                        </div>
                         @foreach (var pool in _config.IisAppPools)
                         {
                             <label style="display:flex;align-items:center;gap:8px;margin-bottom:5px;font-size:13px;cursor:pointer;">
@@ -312,6 +321,16 @@
     {
         if (selected) Session.SelectedAppPools.Add(name);
         else Session.SelectedAppPools.Remove(name);
+    }
+
+    private int SelectedPoolCount => _config.IisAppPools.Count(Session.SelectedAppPools.Contains);
+
+    private bool AllPoolsSelected => SelectedPoolCount == _config.IisAppPools.Count;
+
+    private void ToggleAllPools(bool selected)
+    {
+        foreach (var pool in _config.IisAppPools)
+            TogglePool(pool, selected);
     }
 
     private void GoToResult() => Nav.NavigateTo("/deploy/result");

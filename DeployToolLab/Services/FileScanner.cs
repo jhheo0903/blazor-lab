@@ -87,7 +87,7 @@ public class FileScanner(ILogger<FileScanner> _logger)
     /// Blazor 회로의 SynchronizationContext를 점유하지 않도록 전체 작업을 스레드 풀에서 실행하고,
     /// 동시 비교 수를 제한해 스레드 풀 고갈(→ SignalR ping 지연 → 재연결)을 방지합니다.
     /// </summary>
-    public Task<List<FileChangeItem>> ScanChangesAsync(
+    public Task<ScanResult> ScanChangesAsync(
         string productionPath, string deployPath,
         ScopeSelection scope,
         IProgress<ScanProgress>? progress = null,
@@ -98,7 +98,7 @@ public class FileScanner(ILogger<FileScanner> _logger)
             cancellationToken);
     }
 
-    private async Task<List<FileChangeItem>> ScanChangesCoreAsync(
+    private async Task<ScanResult> ScanChangesCoreAsync(
         string productionPath, string deployPath,
         ScopeSelection scope,
         IProgress<ScanProgress>? progress,
@@ -107,7 +107,8 @@ public class FileScanner(ILogger<FileScanner> _logger)
         var sw = Stopwatch.StartNew();
 
         // 1단계: 비교 대상 파일 쌍 수집 (내용은 읽지 않음) — 전체 개수를 정확히 알 수 있다
-        var pairs = CollectFilePairs(productionPath, deployPath, scope);
+        var emptyDeployOnlyDirs = new List<string>();
+        var pairs = CollectFilePairs(productionPath, deployPath, scope, emptyDeployOnlyDirs);
         var totalFiles = pairs.Count;
         progress?.Report(new ScanProgress(string.Empty, 0, totalFiles, 0, 0, 0));
 
@@ -157,12 +158,15 @@ public class FileScanner(ILogger<FileScanner> _logger)
         progress?.Report(new ScanProgress(
             string.Empty, filesScanned, totalFiles, addedCount, deletedCount, modifiedCount));
 
-        _logger.LogInformation("Scan complete: {Count} files in {Ms}ms", results.Count, sw.ElapsedMilliseconds);
-        return results;
+        _logger.LogInformation(
+            "Scan complete: {Count} files, {EmptyDirs} empty deploy-only dirs in {Ms}ms",
+            results.Count, emptyDeployOnlyDirs.Count, sw.ElapsedMilliseconds);
+        return new ScanResult(results, emptyDeployOnlyDirs);
     }
 
     private static List<FilePair> CollectFilePairs(
-        string productionRoot, string deployRoot, ScopeSelection scope)
+        string productionRoot, string deployRoot, ScopeSelection scope,
+        List<string> emptyDeployOnlyDirs)
     {
         var pairs = new List<FilePair>();
         var visitedDirs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -172,7 +176,7 @@ public class FileScanner(ILogger<FileScanner> _logger)
             : GetSelectedRelativePaths(scope);
 
         foreach (var relativeDir in startDirs)
-            CollectDirectory(productionRoot, deployRoot, relativeDir, scope.ExcludePatterns, pairs, visitedDirs);
+            CollectDirectory(productionRoot, deployRoot, relativeDir, scope.ExcludePatterns, pairs, emptyDeployOnlyDirs, visitedDirs);
 
         return pairs;
     }
@@ -191,13 +195,24 @@ public class FileScanner(ILogger<FileScanner> _logger)
     private static void CollectDirectory(
         string productionRoot, string deployRoot, string relativeDir,
         List<string> excludePatterns,
-        List<FilePair> pairs, HashSet<string> visitedDirs)
+        List<FilePair> pairs, List<string> emptyDeployOnlyDirs,
+        HashSet<string> visitedDirs)
     {
         // 선택 경로가 서로 겹쳐도 같은 폴더를 두 번 수집하지 않는다
         if (!visitedDirs.Add(relativeDir)) return;
 
-        var (prodFiles, prodSubDirs) = ReadDirectory(Path.Combine(productionRoot, relativeDir));
-        var (deployFiles, deploySubDirs) = ReadDirectory(Path.Combine(deployRoot, relativeDir));
+        var prodDir = Path.Combine(productionRoot, relativeDir);
+        var deployDir = Path.Combine(deployRoot, relativeDir);
+        var (prodFiles, prodSubDirs) = ReadDirectory(prodDir);
+        var (deployFiles, deploySubDirs) = ReadDirectory(deployDir);
+
+        // 배포에만 있는 빈 폴더 — 파일 복사로는 만들어지지 않으므로 기록해 두고 배포 시 생성한다
+        if (relativeDir.Length > 0 &&
+            deployFiles.Count == 0 && deploySubDirs.Count == 0 &&
+            Directory.Exists(deployDir) && !Directory.Exists(prodDir))
+        {
+            emptyDeployOnlyDirs.Add(relativeDir);
+        }
 
         foreach (var name in prodFiles.Keys.Union(deployFiles.Keys, StringComparer.OrdinalIgnoreCase))
         {
@@ -218,7 +233,7 @@ public class FileScanner(ILogger<FileScanner> _logger)
             if (IsExcluded(subName + Path.DirectorySeparatorChar, excludePatterns)) continue;
             CollectDirectory(
                 productionRoot, deployRoot, Path.Combine(relativeDir, subName),
-                excludePatterns, pairs, visitedDirs);
+                excludePatterns, pairs, emptyDeployOnlyDirs, visitedDirs);
         }
     }
 

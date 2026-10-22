@@ -40,6 +40,14 @@ public class DeployExecutor(
         var sessionId = Guid.NewGuid().ToString("N")[..8];
         PreflightChecker.AcquireSessionLock(session.ProductionPath, sessionId);
 
+        // 배포 회차별 격리 폴더 — 이전 회차의 격리 파일을 덮어쓰지 않도록 _quarantine\{시각}\ 아래로 옮긴다
+        var quarantineRoot = Path.Combine(
+            session.ProductionPath, QUARANTINE_FOLDER, DateTime.Now.ToString("yyyyMMdd_HHmmss"));
+        var quarantinedCount = 0;
+
+        // 삭제 예정 파일을 _quarantine으로 옮긴 원래 폴더 — 배포 후 비어 있으면 정리한다
+        var vacatedDirs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
         try
         {
             var applyItems = session.ApplyItems.ToList();
@@ -52,7 +60,7 @@ public class DeployExecutor(
                 cancellationToken.ThrowIfCancellationRequested();
 
                 var item = applyItems[i];
-                var outcome = await ProcessItemAsync(session, item, i + 1, total, cancellationToken);
+                var outcome = await ProcessItemAsync(session, item, quarantineRoot, i + 1, total, cancellationToken);
 
                 if (outcome == ItemOutcome.Aborted)
                 {
@@ -66,9 +74,17 @@ public class DeployExecutor(
                 {
                     session.DeploySucceededCount++;
                     await LogAsync(session, $"[{i + 1}/{total}] {item.RelativePath}");
+
+                    if (item.Status == FileChangeStatus.Deleted)
+                    {
+                        quarantinedCount++;
+                        if (Path.GetDirectoryName(Path.Combine(session.ProductionPath, item.RelativePath)) is { } dir)
+                            vacatedDirs.Add(dir);
+                    }
                 }
             }
 
+            await CreateEmptyDeployDirectoriesAsync(session);
             await LogAsync(session, "배포 완료");
         }
         catch (OperationCanceledException)
@@ -82,6 +98,12 @@ public class DeployExecutor(
         }
         finally
         {
+            if (quarantinedCount > 0)
+                await LogAsync(session, $"격리 파일 {quarantinedCount}개 → {quarantineRoot}");
+
+            // 중단·취소된 경우에도 이미 옮긴 파일의 빈 폴더는 정리한다
+            await RemoveEmptyDirectoriesAsync(session, vacatedDirs);
+
             PreflightChecker.ReleaseSessionLock(session.ProductionPath);
             session.Pause = null;
             session.IsDeploying = false;
@@ -92,7 +114,7 @@ public class DeployExecutor(
 
     // 잠김 오류는 자동 재시도 후 일시중지하여 사용자 결정을 기다리고, 그 외 오류는 실패로 기록하고 다음 항목으로 넘어간다
     private async Task<ItemOutcome> ProcessItemAsync(
-        DeploySession session, FileChangeItem item,
+        DeploySession session, FileChangeItem item, string quarantineRoot,
         int index, int total,
         CancellationToken cancellationToken)
     {
@@ -101,7 +123,7 @@ public class DeployExecutor(
             IOException lockError;
             try
             {
-                await ApplyItemWithAutoRetryAsync(item, session.ProductionPath, cancellationToken);
+                await ApplyItemWithAutoRetryAsync(item, session.ProductionPath, quarantineRoot, cancellationToken);
                 return ItemOutcome.Succeeded;
             }
             catch (IOException ex) when (IsLockViolation(ex))
@@ -133,14 +155,15 @@ public class DeployExecutor(
     }
 
     private static async Task ApplyItemWithAutoRetryAsync(
-        FileChangeItem item, string productionPath, CancellationToken cancellationToken)
+        FileChangeItem item, string productionPath, string quarantineRoot,
+        CancellationToken cancellationToken)
     {
         var retries = 0;
         while (true)
         {
             try
             {
-                await ApplyItemAsync(item, productionPath);
+                await ApplyItemAsync(item, productionPath, quarantineRoot);
                 return;
             }
             catch (IOException ex) when (IsLockViolation(ex) && retries < LockAutoRetryCount)
@@ -151,7 +174,7 @@ public class DeployExecutor(
         }
     }
 
-    private static async Task ApplyItemAsync(FileChangeItem item, string productionPath)
+    private static async Task ApplyItemAsync(FileChangeItem item, string productionPath, string quarantineRoot)
     {
         switch (item.Status)
         {
@@ -160,7 +183,7 @@ public class DeployExecutor(
                 await ApplyFileAsync(item, productionPath);
                 break;
             case FileChangeStatus.Deleted:
-                QuarantineFile(item, productionPath);
+                QuarantineFile(item, quarantineRoot);
                 break;
         }
     }
@@ -233,16 +256,89 @@ public class DeployExecutor(
         await CopyFileAsync(item.DeployFullPath, destPath);
     }
 
-    private static void QuarantineFile(FileChangeItem item, string productionPath)
+    private static void QuarantineFile(FileChangeItem item, string quarantineRoot)
     {
         if (item.ProductionFullPath is null) return;
 
-        var quarantinePath = Path.Combine(productionPath, QUARANTINE_FOLDER, item.RelativePath);
+        var quarantinePath = Path.Combine(quarantineRoot, item.RelativePath);
         var quarantineDir = Path.GetDirectoryName(quarantinePath);
         if (quarantineDir is not null) Directory.CreateDirectory(quarantineDir);
 
         File.Move(item.ProductionFullPath, quarantinePath, overwrite: true);
     }
+
+    /// <summary>
+    /// 배포 경로에만 있는 빈 폴더를 운영에도 만들어 폴더 구조를 배포 폴더와 맞춘다.
+    /// (파일이 있는 폴더는 파일 복사 시 자동으로 생기므로 빈 폴더만 따로 처리)
+    /// </summary>
+    private async Task CreateEmptyDeployDirectoriesAsync(DeploySession session)
+    {
+        var created = new List<string>();
+        foreach (var relDir in session.EmptyDeployOnlyDirectories)
+        {
+            var target = Path.Combine(session.ProductionPath, relDir);
+            if (Directory.Exists(target)) continue;
+
+            try
+            {
+                Directory.CreateDirectory(target);
+                created.Add(relDir);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                await LogAsync(session, $"빈 폴더 생성 실패 [{relDir}]: {ex.Message}", isWarning: true);
+            }
+        }
+
+        if (created.Count > 0)
+            await LogAsync(session, $"빈 폴더 {created.Count}개 생성: {string.Join(", ", created)}");
+    }
+
+    /// <summary>
+    /// 파일을 옮겨 비게 된 폴더를 지우고, 상위 폴더도 비면 운영 루트 직전까지 차례로 지운다.
+    /// 원래부터 다른 파일이나 하위 폴더가 있는 폴더, 배포 경로에도 있는 폴더는 건드리지 않는다
+    /// (최종 폴더 구조를 배포 폴더와 같게 유지).
+    /// </summary>
+    private async Task RemoveEmptyDirectoriesAsync(DeploySession session, HashSet<string> vacatedDirs)
+    {
+        if (vacatedDirs.Count == 0) return;
+
+        var root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(session.ProductionPath));
+        var removed = new List<string>();
+
+        // 깊은 폴더부터 처리해야 하위가 지워진 뒤 상위가 비었는지 판단할 수 있다
+        foreach (var start in vacatedDirs.OrderByDescending(d => d.Length))
+        {
+            var dir = Path.TrimEndingDirectorySeparator(Path.GetFullPath(start));
+
+            // finally 블록에서 호출되므로 여기서 예외가 새어 나가면 세션 락이 풀리지 않는다 — 폴더 단위로 모두 처리
+            try
+            {
+                // 배포 경로에 같은 폴더가 있으면 그 폴더와 상위 폴더는 모두 남긴다
+                while (IsStrictlyUnder(dir, root) &&
+                       Directory.Exists(dir) &&
+                       !Directory.Exists(Path.Combine(session.DeployPath, Path.GetRelativePath(root, dir))) &&
+                       !Directory.EnumerateFileSystemEntries(dir).Any())
+                {
+                    // recursive: false — 그 사이 파일이 생겼으면 실패하고 남겨 둔다
+                    Directory.Delete(dir, recursive: false);
+                    removed.Add(Path.GetRelativePath(root, dir));
+                    dir = Path.GetDirectoryName(dir) ?? root;
+                }
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                logger.LogWarning(ex, "빈 폴더 삭제 실패: {Directory}", dir);
+            }
+        }
+
+        if (removed.Count > 0)
+            await LogAsync(session, $"빈 폴더 {removed.Count}개 정리: {string.Join(", ", removed)}");
+    }
+
+    private static bool IsStrictlyUnder(string path, string root) =>
+        path.Length > root.Length &&
+        path.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
 
     private async Task LogAsync(DeploySession session, string message,
         bool isError = false, bool isWarning = false)

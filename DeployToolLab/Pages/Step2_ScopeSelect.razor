@@ -246,8 +246,10 @@
 
         try
         {
-            var changes = await FileScanner.ScanChangesAsync(
+            var scan = await FileScanner.ScanChangesAsync(
                 Session.ProductionPath, Session.DeployPath, Session.Scope, progress, _disposeCts.Token);
+            var changes = scan.Changes;
+            Session.EmptyDeployOnlyDirectories = scan.EmptyDeployOnlyDirectories;
             var config = await ConfigService.LoadAsync();
             SkipRuleMatcher.Apply(changes, config.SkipPatterns);
             Session.Changes = changes;

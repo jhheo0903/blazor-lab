@@ -282,8 +282,10 @@
                 .Where(c => !(c.SkipRule is not null && c.Decision == DeployDecisionValue.Skip))
                 .ToDictionary(c => c.RelativePath, c => c.Decision, StringComparer.OrdinalIgnoreCase);
 
-            var newChanges = await FileScanner.ScanChangesAsync(
+            var scan = await FileScanner.ScanChangesAsync(
                 Session.ProductionPath, Session.DeployPath, Session.Scope);
+            var newChanges = scan.Changes;
+            Session.EmptyDeployOnlyDirectories = scan.EmptyDeployOnlyDirectories;
 
             // 스킵 규칙을 먼저 적용한 뒤 이전 결정으로 덮어써 사용자 선택을 우선한다
             ConfigService.Reload();
