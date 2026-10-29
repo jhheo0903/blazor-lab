@@ -10,16 +10,42 @@
   ],
   "postDeployExecutables": [
     {
-      "displayName": "DB 마이그레이션",
-      "path": "D:\\tools\\migrate.bat",
-      "arguments": "",
-      "workingDirectory": "D:\\tools"
+      "displayName": "PS CMD 반영",
+      "steps": [
+        {
+          "path": "D:\\NETS\\Setup\\Utility\\Nets.IM.InstallUtility.exe",
+          "arguments": "PSCMD /mode:merge /key:{key} /source:\"{file}\" /version:1.0",
+          "forEachFile": { "directory": "D:\\NETS\\Setup\\Data", "pattern": "pscmd.*.json" }
+        }
+      ]
     },
     {
-      "displayName": "캐시 초기화",
-      "path": "D:\\tools\\clear-cache.exe",
-      "arguments": "--all",
-      "workingDirectory": ""
+      "displayName": "DLL & PDB 반영",
+      "steps": [
+        {
+          "path": "D:\\NETS\\Setup\\Utility\\Nets.IM.InstallUtility.exe",
+          "arguments": "ASMDLL /mode:merge /key:{key} /source:\"{file}\" /version:2.0",
+          "forEachFile": { "directory": "D:\\NETS\\Setup\\Data", "pattern": "asmdll.*.json" }
+        },
+        {
+          "path": "D:\\NETS\\Setup\\Utility\\Nets.IM.InstallUtility.exe",
+          "arguments": "ASMPDB /mode:merge /key:{key} /source:\"{file}\" /version:2.0",
+          "forEachFile": { "directory": "D:\\NETS\\Setup\\Data", "pattern": "asmpdb.*.json" }
+        }
+      ]
+    },
+    {
+      "displayName": "DB 설정 반영 (DBCONF)",
+      "steps": [
+        {
+          "path": "D:\\NETS\\Setup\\Utility\\Nets.IM.InstallUtility.exe",
+          "arguments": "DBCONF /mode:merge /path:config /source:\"D:\\NETS\\Setup\\Data\\dbconf.config.json\""
+        },
+        {
+          "path": "D:\\NETS\\Setup\\Utility\\Nets.IM.InstallUtility.exe",
+          "arguments": "DBCONFDESC /mode:merge /source:\"D:\\NETS\\Setup\\Data\\dbconf.desc.json\" /version:2.0"
+        }
+      ]
     }
   ]
 }
