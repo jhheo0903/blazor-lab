@@ -3,7 +3,23 @@
     "MyWindowsService"
   ],
   "iisAppPools": [
-    "DefaultAppPool"
+    "m365m",
+    "m365mapi",
+    "m365mexolfa",
+    "m365mexoorgv3",
+    "m365mexorf",
+    "m365mexorm",
+    "m365mexoschdschr",
+    "m365mteamsorgv3",
+    "m365signin",
+    "m365sts",
+    "nsm",
+    "nsmauth",
+    "nsmjobscheduler",
+    "nsmjobworker",
+    "nsmmailform",
+    "nsmscim",
+    "nsmsis"
   ],
   "skipPatterns": [
     "appsettings.Development.json"
